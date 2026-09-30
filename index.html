@@ -1,0 +1,523 @@
+<!DOCTYPE html>
+<html lang="sv">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="theme-color" content="#0b2830">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-title" content="DykLogg">
+<link rel="manifest" href="manifest.webmanifest">
+<link rel="icon" href="icon-192.png">
+<link rel="apple-touch-icon" href="icon-192.png">
+<title>DykLogg</title>
+<style>
+  :root {
+    --bg: #eaf1f0; --ink: #0b2830; --muted: #4d6a70; --sea: #1f6b73; --sea-soft: #c9dddc;
+    --line: #bcd0cf; --flag: #d94f0b; --flag-dark: #b53f06; --white: #ffffff; --ok: #1d7a46;
+  }
+  * { box-sizing: border-box; -webkit-tap-highlight-color: transparent; }
+  html, body { margin: 0; background: var(--bg); color: var(--ink); }
+  body {
+    font-family: "Avenir Next", "Segoe UI", system-ui, -apple-system, Roboto, sans-serif;
+    font-size: 16px; line-height: 1.4;
+    padding-bottom: calc(76px + env(safe-area-inset-bottom));
+  }
+  #app { max-width: 520px; margin: 0 auto; padding: 22px 20px 12px; }
+  h1, h2, h3 { margin: 0; line-height: 1.05; letter-spacing: -0.02em; }
+  h1 { font-size: 40px; font-weight: 800; }
+  h2 { font-size: 30px; font-weight: 800; margin-bottom: 14px; }
+  h3 { font-size: 20px; font-weight: 800; margin: 28px 0 10px; }
+  .tag { color: var(--muted); margin: 6px 0 0; font-size: 17px; }
+  button, input, textarea { font: inherit; color: inherit; }
+  :focus-visible { outline: 3px solid var(--flag); outline-offset: 2px; }
+
+  .stats { display: grid; grid-template-columns: repeat(3, 1fr); margin: 26px 0 8px;
+           border-top: 2px solid var(--ink); border-bottom: 1px solid var(--line); }
+  .stat { padding: 14px 0 14px 12px; border-left: 1px solid var(--line); }
+  .stat:first-child { padding-left: 0; border-left: 0; }
+  .stat b { display: block; font-size: 32px; font-weight: 800; letter-spacing: -0.02em; font-variant-numeric: tabular-nums; line-height: 1.1; }
+  .stat b small { font-size: 15px; font-weight: 600; color: var(--muted); margin-left: 2px; }
+  .stat span { font-size: 14px; color: var(--muted); }
+
+  .rail-title { margin: 26px 0 4px; font-size: 18px; font-weight: 700; }
+  .rail { position: relative; margin: 0; padding: 0; list-style: none; }
+  .rail::before { content: ""; position: absolute; left: 0; right: 0; top: 0; height: 3px; background: var(--sea); }
+  .rail li { padding-top: 12px; }
+  .rail button { display: block; width: 100%; text-align: left; background: none; border: 0; padding: 4px 0 8px; cursor: pointer; }
+  .rail .meta { display: flex; justify-content: space-between; gap: 12px; font-size: 14px; color: var(--muted); }
+  .rail .meta strong { color: var(--ink); font-weight: 700; font-variant-numeric: tabular-nums; }
+  .track { height: 14px; margin-top: 4px; background: var(--sea-soft); border-radius: 0 7px 7px 0; overflow: hidden; }
+  .bar { height: 100%; background: var(--sea); border-radius: 0 7px 7px 0; transform-origin: left; }
+  .bar.deepest { background: var(--flag); }
+  @media (prefers-reduced-motion: no-preference) {
+    .bar { animation: sink .7s ease-out both; }
+    @keyframes sink { from { transform: scaleX(0); } to { transform: scaleX(1); } }
+  }
+
+  .btn { display: block; width: 100%; padding: 16px; border: 0; border-radius: 12px; font-weight: 700; font-size: 17px;
+         background: var(--flag); color: #fff; cursor: pointer; text-align: center; text-decoration: none; }
+  .btn:active { background: var(--flag-dark); }
+  .btn.secondary { background: transparent; color: var(--ink); border: 2px solid var(--ink); }
+  .btn.danger { background: transparent; color: var(--flag-dark); border: 2px solid var(--flag-dark); }
+  .btn.danger.armed { background: var(--flag-dark); color: #fff; }
+  .btn.small { padding: 10px; font-size: 15px; }
+  .row { display: flex; gap: 10px; margin-top: 12px; }
+  .row .btn { flex: 1; }
+  .spaced { margin-top: 26px; }
+
+  label.f { display: block; margin-bottom: 14px; }
+  label.f span { display: block; font-size: 14px; font-weight: 600; color: var(--muted); margin-bottom: 4px; }
+  .in { width: 100%; padding: 13px 12px; background: var(--white); border: 1.5px solid var(--line); border-radius: 10px; }
+  .in:focus { border-color: var(--sea); outline: 2px solid var(--sea); outline-offset: 0; }
+  textarea.in { min-height: 110px; resize: vertical; }
+  .pair { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
+  .err { background: #fde8dd; border-left: 4px solid var(--flag); padding: 10px 12px; margin: 0 0 14px; border-radius: 4px; }
+  .note { background: #fff4d6; border-left: 4px solid #c99500; padding: 10px 12px; margin: 14px 0; border-radius: 4px; font-size: 14px; }
+  .good { background: #dff2e6; border-left: 4px solid var(--ok); padding: 10px 12px; margin: 14px 0; border-radius: 4px; font-size: 14px; }
+
+  .list { list-style: none; margin: 0; padding: 0; border-top: 2px solid var(--ink); }
+  .list li { border-bottom: 1px solid var(--line); }
+  .list button { width: 100%; text-align: left; background: none; border: 0; padding: 14px 0; cursor: pointer; }
+  .list .top { display: flex; justify-content: space-between; align-items: baseline; gap: 10px; }
+  .list .top strong { font-size: 18px; }
+  .list .depth { font-weight: 800; font-size: 20px; font-variant-numeric: tabular-nums; white-space: nowrap; }
+  .list .sub { color: var(--muted); font-size: 15px; margin-top: 2px; }
+  .list .sig-ok { color: var(--ok); font-weight: 600; }
+  .list .sig-no { color: var(--flag-dark); font-weight: 600; }
+  .empty { padding: 22px 0; color: var(--muted); }
+  .empty b { display: block; color: var(--ink); font-size: 18px; margin-bottom: 4px; }
+
+  dl { margin: 0; border-top: 2px solid var(--ink); }
+  dl div { display: grid; grid-template-columns: 110px 1fr; gap: 10px; padding: 11px 0; border-bottom: 1px solid var(--line); }
+  dt { color: var(--muted); font-size: 15px; }
+  dd { margin: 0; overflow-wrap: anywhere; white-space: pre-wrap; }
+  .back { background: none; border: 0; padding: 0 0 12px; font-weight: 600; color: var(--sea); cursor: pointer; font-size: 16px; }
+
+  .sigbox { border-top: 1px solid var(--line); padding: 12px 0 14px; }
+  .sigbox .role { font-weight: 700; margin-bottom: 6px; }
+  .sig { background: var(--white); border: 1.5px solid var(--line); border-radius: 10px; padding: 6px 10px; }
+  .sig svg { display: block; width: 100%; height: auto; max-height: 110px; }
+  .sig path { fill: none; stroke: var(--ink); stroke-width: 3; stroke-linecap: round; stroke-linejoin: round; }
+  .sigmeta { font-size: 14px; color: var(--muted); margin: 6px 0 8px; }
+
+  textarea.csv { width: 100%; min-height: 150px; margin-top: 10px; font-family: ui-monospace, Menlo, monospace; font-size: 12px;
+                 padding: 10px; border: 1.5px solid var(--line); border-radius: 10px; background: var(--white); }
+
+  nav { position: fixed; left: 0; right: 0; bottom: 0; background: var(--ink); z-index: 10; padding-bottom: env(safe-area-inset-bottom); }
+  nav .inner { max-width: 520px; margin: 0 auto; display: grid; grid-template-columns: repeat(3, 1fr); }
+  nav button { background: none; border: 0; color: #9fb9bd; padding: 10px 0 9px; font-size: 13px; font-weight: 600;
+               display: flex; flex-direction: column; align-items: center; gap: 3px; cursor: pointer; }
+  nav button svg { width: 24px; height: 24px; stroke: currentColor; fill: none; stroke-width: 2; stroke-linecap: round; stroke-linejoin: round; }
+  nav button[aria-current="page"] { color: #fff; box-shadow: inset 0 3px 0 var(--flag); }
+  .loading { padding: 60px 0; text-align: center; color: var(--muted); }
+
+  /* Signaturruta */
+  .modal { position: fixed; inset: 0; background: rgba(11,40,48,.72); z-index: 50; overflow-y: auto; }
+  .sheet { background: var(--bg); max-width: 520px; margin: 0 auto; min-height: 100%; padding: 22px 20px calc(24px + env(safe-area-inset-bottom)); }
+  .sheet h2 { font-size: 26px; }
+  .padwrap { position: relative; background: var(--white); border: 2px solid var(--ink); border-radius: 10px; overflow: hidden;
+             background-image: linear-gradient(to bottom, transparent 74%, var(--sea-soft) 74%, var(--sea-soft) calc(74% + 2px), transparent calc(74% + 2px)); }
+  .padwrap canvas { display: block; touch-action: none; cursor: crosshair; }
+  .hint { color: var(--muted); font-size: 14px; margin: 4px 0 8px; }
+
+  @media print {
+    nav, .noprint, .back, .row, button { display: none !important; }
+    body { background: #fff; padding: 0; }
+    #app { max-width: none; padding: 0; }
+    .sig, dl, .sigbox { break-inside: avoid; }
+  }
+</style>
+</head>
+<body>
+<div id="app"><p class="loading">Laddar dykboken…</p></div>
+<nav aria-label="Huvudmeny"><div class="inner" id="nav"></div></nav>
+
+<script>
+(function () {
+  var STORAGE_KEY = 'dyklogg.dives.v1';
+  var mem = {};
+  var state = {
+    loading: true, dives: [], screen: 'home', detailId: null, editId: null,
+    form: null, error: '', exportOpen: false, armedDelete: false, armedSig: '', storageWarn: false, msg: ''
+  };
+  var FIELDS = [
+    ['task', 'Uppgift'], ['team', 'Arbetslag'], ['company', 'Bolag'],
+    ['location', 'Plats'], ['helmet', 'Hjälm'], ['regulator', 'Regulator']
+  ];
+  var ROLES = { diver: 'Dykare', leader: 'Dykledare' };
+
+  /* ---------- hjälpfunktioner ---------- */
+  function esc(s) {
+    return String(s == null ? '' : s).replace(/[&<>"']/g, function (c) {
+      return { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c];
+    });
+  }
+  function today() { var d = new Date(); d.setMinutes(d.getMinutes() - d.getTimezoneOffset()); return d.toISOString().slice(0, 10); }
+  function uid() { return Date.now().toString(36) + Math.random().toString(36).slice(2, 8); }
+  function num(v) { var n = parseFloat(String(v).replace(',', '.')); return isNaN(n) ? 0 : n; }
+  function fmtNum(n) { return (Math.round(n * 10) / 10).toString().replace('.', ','); }
+  function fmtDate(iso) {
+    if (!iso) return '';
+    var d = new Date(iso + 'T12:00:00');
+    return isNaN(d) ? iso : d.toLocaleDateString('sv-SE', { day: 'numeric', month: 'short', year: 'numeric' });
+  }
+  function fmtStamp(iso) {
+    var d = new Date(iso);
+    if (isNaN(d)) return '';
+    return d.toLocaleDateString('sv-SE', { day: 'numeric', month: 'short', year: 'numeric' }) + ' kl. ' +
+      d.toLocaleTimeString('sv-SE', { hour: '2-digit', minute: '2-digit' });
+  }
+  function minutes(d) {
+    if (!d.start || !d.end) return 0;
+    var a = d.start.split(':'), b = d.end.split(':');
+    var m = (+b[0] * 60 + +b[1]) - (+a[0] * 60 + +a[1]);
+    if (m < 0) m += 1440;
+    return m;
+  }
+  function fmtDur(m) { if (!m) return ''; var h = Math.floor(m / 60), r = m % 60; return h ? h + ' h ' + (r ? r + ' min' : '') : r + ' min'; }
+  function sorted() {
+    return state.dives.slice().sort(function (a, b) { return (b.date + (b.start || '')).localeCompare(a.date + (a.start || '')); });
+  }
+  function findDive(id) { return state.dives.filter(function (d) { return d.id === id; })[0]; }
+  function suggestions(key) {
+    var seen = {}, out = [];
+    state.dives.forEach(function (d) { var v = (d[key] || '').trim(); if (v && !seen[v.toLowerCase()]) { seen[v.toLowerCase()] = 1; out.push(v); } });
+    return out;
+  }
+  function sigCount(d) { return d.sig ? (d.sig.diver ? 1 : 0) + (d.sig.leader ? 1 : 0) : 0; }
+
+  /* ---------- lagring i telefonen ---------- */
+  function lsGet(k) { try { return localStorage.getItem(k); } catch (e) { return mem[k] || null; } }
+  function lsSet(k, v) { try { localStorage.setItem(k, v); return true; } catch (e) { mem[k] = v; return false; } }
+  function load() {
+    try { state.dives = JSON.parse(lsGet(STORAGE_KEY) || '[]') || []; } catch (e) { state.dives = []; }
+    state.loading = false;
+    try { if (navigator.storage && navigator.storage.persist) navigator.storage.persist(); } catch (e) {}
+    render();
+  }
+  function persist() { state.storageWarn = !lsSet(STORAGE_KEY, JSON.stringify(state.dives)); }
+
+  /* ---------- signatur ---------- */
+  function sigSvg(strokes) {
+    var paths = strokes.map(function (s) { return '<path d="M' + s.map(function (p) { return p[0] + ' ' + p[1]; }).join(' L ') + '"/>'; }).join('');
+    return '<svg viewBox="0 0 600 240" role="img" aria-label="Signatur">' + paths + '</svg>';
+  }
+
+  function openSignModal(role) {
+    var d = findDive(state.detailId); if (!d) return;
+    var ov = document.createElement('div');
+    ov.className = 'modal'; ov.setAttribute('role', 'dialog'); ov.setAttribute('aria-modal', 'true');
+    ov.innerHTML = '<div class="sheet"><h2>Signera som ' + ROLES[role].toLowerCase() + '</h2>' +
+      '<label class="f"><span>Namn</span><input class="in" id="sgName" type="text" autocomplete="name"></label>' +
+      '<p class="hint">Rita din signatur i rutan med fingret.</p>' +
+      '<div class="padwrap"><canvas id="sgPad"></canvas></div>' +
+      '<p class="err" id="sgErr" hidden style="margin-top:12px"></p>' +
+      '<div class="row"><button class="btn secondary" id="sgClear" type="button">Rensa</button>' +
+      '<button class="btn secondary" id="sgCancel" type="button">Avbryt</button></div>' +
+      '<div class="row"><button class="btn" id="sgOk" type="button">Signera</button></div></div>';
+    document.body.appendChild(ov);
+    document.body.style.overflow = 'hidden';
+
+    var cv = ov.querySelector('#sgPad'), ctx = cv.getContext('2d');
+    var w = cv.parentNode.clientWidth, h = Math.round(w * 0.4), dpr = window.devicePixelRatio || 1;
+    cv.width = w * dpr; cv.height = h * dpr; cv.style.width = w + 'px'; cv.style.height = h + 'px';
+    ctx.scale(dpr, dpr);
+    var strokes = [], cur = null;
+
+    function pt(e) {
+      var r = cv.getBoundingClientRect();
+      return [Math.round((e.clientX - r.left) / r.width * 600), Math.round((e.clientY - r.top) / r.height * 240)];
+    }
+    function redraw() {
+      ctx.clearRect(0, 0, w, h);
+      ctx.lineWidth = 2.5; ctx.lineCap = 'round'; ctx.lineJoin = 'round'; ctx.strokeStyle = '#0b2830';
+      strokes.forEach(function (s) {
+        ctx.beginPath();
+        s.forEach(function (p, i) { var x = p[0] / 600 * w, y = p[1] / 240 * h; if (i) ctx.lineTo(x, y); else ctx.moveTo(x, y); });
+        ctx.stroke();
+      });
+    }
+    cv.addEventListener('pointerdown', function (e) {
+      e.preventDefault();
+      try { cv.setPointerCapture(e.pointerId); } catch (x) {}
+      var p = pt(e); cur = [p, [p[0] + 1, p[1]]]; strokes.push(cur); redraw();
+    });
+    cv.addEventListener('pointermove', function (e) {
+      if (!cur) return; e.preventDefault();
+      var p = pt(e), last = cur[cur.length - 1];
+      if (Math.abs(p[0] - last[0]) + Math.abs(p[1] - last[1]) < 3) return;
+      cur.push(p); redraw();
+    });
+    function up() { cur = null; }
+    cv.addEventListener('pointerup', up); cv.addEventListener('pointercancel', up);
+
+    function close() { document.body.removeChild(ov); document.body.style.overflow = ''; }
+    ov.querySelector('#sgClear').onclick = function () { strokes = []; cur = null; redraw(); };
+    ov.querySelector('#sgCancel').onclick = close;
+    ov.querySelector('#sgOk').onclick = function () {
+      var name = ov.querySelector('#sgName').value.trim(), err = ov.querySelector('#sgErr');
+      var pts = strokes.reduce(function (n, s) { return n + s.length; }, 0);
+      if (!name) { err.textContent = 'Skriv ditt namn.'; err.hidden = false; return; }
+      if (pts < 8) { err.textContent = 'Rita din signatur i rutan.'; err.hidden = false; return; }
+      var dv = findDive(state.detailId); if (!dv) return close();
+      dv.sig = dv.sig || {};
+      dv.sig[role] = { name: name, strokes: strokes, at: new Date().toISOString() };
+      persist(); state.armedSig = ''; close(); render();
+    };
+  }
+
+  /* ---------- vyer ---------- */
+  var ICONS = {
+    home: '<svg viewBox="0 0 24 24"><path d="M3 11l9-8 9 8"/><path d="M5 10v10h5v-6h4v6h5V10"/></svg>',
+    log: '<svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"/><path d="M12 8v8M8 12h8"/></svg>',
+    book: '<svg viewBox="0 0 24 24"><path d="M4 5a2 2 0 0 1 2-2h13v17H6a2 2 0 0 0-2 2z"/><path d="M4 5v16"/><path d="M9 8h6"/></svg>'
+  };
+
+  function homeView() {
+    var list = sorted(), total = list.length;
+    var deepest = list.reduce(function (m, d) { return Math.max(m, num(d.depth)); }, 0);
+    var mins = list.reduce(function (s, d) { return s + minutes(d); }, 0);
+    var h = Math.floor(mins / 60), r = mins % 60;
+    var html = '<h1>DykLogg</h1><p class="tag">Din digitala dykbok</p>';
+    html += '<div class="stats">' +
+      '<div class="stat"><b>' + total + '</b><span>dyk</span></div>' +
+      '<div class="stat"><b>' + fmtNum(deepest) + '<small>m</small></b><span>djupast</span></div>' +
+      '<div class="stat"><b>' + h + '<small>h</small> ' + r + '<small>min</small></b><span>total tid</span></div></div>';
+    var unsigned = list.filter(function (d) { return !(d.sig && d.sig.leader); }).length;
+    if (total && unsigned) html += '<p class="note">' + unsigned + (unsigned === 1 ? ' dyk saknar' : ' dyk saknar') + ' dykledarens signatur.</p>';
+    if (state.storageWarn) html += '<p class="note">Dykboken kan inte sparas permanent här. Öppna appen från hemskärmen eller i Chrome.</p>';
+    if (!total) {
+      html += '<div class="empty"><b>Inga dyk ännu</b>Logga ditt första dyk för att börja fylla dykboken.</div>';
+    } else {
+      var recent = list.slice(0, 5);
+      var scale = Math.max.apply(null, recent.map(function (d) { return num(d.depth); }).concat([1]));
+      var top = recent.reduce(function (m, d) { return num(d.depth) > num(m.depth) ? d : m; }, recent[0]);
+      html += '<p class="rail-title">Senaste dyken</p><ul class="rail">';
+      recent.forEach(function (d) {
+        var pct = Math.max(3, Math.round(num(d.depth) / scale * 100));
+        html += '<li><button data-open="' + esc(d.id) + '"><span class="meta"><span>' + esc(fmtDate(d.date)) +
+          (d.location ? ' · ' + esc(d.location) : '') + '</span><strong>' + fmtNum(num(d.depth)) + ' m</strong></span>' +
+          '<div class="track"><div class="bar' + (d === top && recent.length > 1 ? ' deepest' : '') + '" style="width:' + pct + '%"></div></div></button></li>';
+      });
+      html += '</ul>';
+    }
+    html += '<div class="spaced"><button class="btn" data-go="log">Logga nytt dyk</button></div>';
+    return html;
+  }
+
+  function formView() {
+    var f = state.form, editing = !!state.editId;
+    var html = '<h2>' + (editing ? 'Ändra dyk' : 'Nytt dyk') + '</h2>';
+    if (editing) { var od = findDive(state.editId); if (od && sigCount(od)) html += '<p class="note">Dyket är signerat. Om du ändrar något tas signaturerna bort och dyket måste signeras igen.</p>'; }
+    if (state.error) html += '<p class="err" id="err" role="alert">' + esc(state.error) + '</p>';
+    html += '<label class="f"><span>Datum</span><input class="in" type="date" data-k="date" value="' + esc(f.date) + '"></label>';
+    html += '<div class="pair"><label class="f"><span>Starttid</span><input class="in" type="time" data-k="start" value="' + esc(f.start) + '"></label>' +
+      '<label class="f"><span>Sluttid</span><input class="in" type="time" data-k="end" value="' + esc(f.end) + '"></label></div>';
+    html += '<label class="f"><span>Maxdjup (m)</span><input class="in" type="text" inputmode="decimal" data-k="depth" placeholder="t.ex. 18,5" value="' + esc(f.depth) + '"></label>';
+    FIELDS.forEach(function (fd) {
+      var key = fd[0], opts = suggestions(key);
+      html += '<label class="f"><span>' + fd[1] + '</span><input class="in" type="text" data-k="' + key + '" list="dl-' + key + '" autocomplete="off" value="' + esc(f[key]) + '">';
+      if (opts.length) html += '<datalist id="dl-' + key + '">' + opts.map(function (o) { return '<option value="' + esc(o) + '">'; }).join('') + '</datalist>';
+      html += '</label>';
+    });
+    html += '<label class="f"><span>Anteckningar</span><textarea class="in" data-k="notes">' + esc(f.notes) + '</textarea></label>';
+    html += '<button class="btn" data-save>' + (editing ? 'Spara ändringar' : 'Spara dyk') + '</button>';
+    if (editing) html += '<div class="row"><button class="btn secondary" data-cancel-edit>Avbryt</button></div>';
+    return html;
+  }
+
+  function bookView() {
+    var list = sorted();
+    var html = '<h2>Dykbok</h2>';
+    if (state.storageWarn) html += '<p class="note">Dykboken kan inte sparas permanent här. Spara en säkerhetskopia så att inget går förlorat.</p>';
+    if (state.msg) html += '<p class="good" role="status">' + esc(state.msg) + '</p>';
+    if (!list.length) {
+      html += '<div class="empty"><b>Du har inte loggat något dyk ännu</b>Tryck på Logga för att lägga till det första.</div>';
+    } else {
+      html += '<ul class="list">';
+      list.forEach(function (d) {
+        var sub = [d.location, d.task].filter(Boolean).join(' · ');
+        var line2 = [(d.start && d.end) ? d.start + '–' + d.end : '', d.company].filter(Boolean).join(' · ');
+        var sc = sigCount(d);
+        var sigLine = sc === 2 ? '<span class="sig-ok">Signerad av dykare och dykledare</span>'
+          : sc === 1 ? '<span class="sig-no">Signerad av ' + (d.sig.diver ? 'dykare' : 'dykledare') + ', saknar ' + (d.sig.diver ? 'dykledare' : 'dykare') + '</span>'
+          : '<span class="sig-no">Ej signerad</span>';
+        html += '<li><button data-open="' + esc(d.id) + '"><div class="top"><strong>' + esc(fmtDate(d.date)) + '</strong><span class="depth">' + fmtNum(num(d.depth)) + ' m</span></div>' +
+          (sub ? '<div class="sub">' + esc(sub) + '</div>' : '') + (line2 ? '<div class="sub">' + esc(line2) + '</div>' : '') +
+          '<div class="sub">' + sigLine + '</div></button></li>';
+      });
+      html += '</ul>';
+    }
+    html += '<h3>Säkerhetskopia</h3><p class="hint">Dykboken sparas i den här telefonen. Spara en kopia ibland, särskilt innan du byter telefon.</p>' +
+      '<div class="row"><button class="btn secondary small" data-backup>Spara kopia</button>' +
+      '<button class="btn secondary small" data-restore>Läs in kopia</button></div>' +
+      '<input type="file" id="restoreFile" accept=".json,application/json" hidden>' +
+      '<div class="row"><button class="btn secondary small" data-export>' + (state.exportOpen ? 'Dölj tabell' : 'Visa som tabell (Excel)') + '</button></div>';
+    if (state.exportOpen) {
+      html += '<textarea class="csv" id="csv" readonly>' + esc(toCsv()) + '</textarea>' +
+        '<div class="row"><button class="btn small" data-copy>Kopiera</button></div><p class="tag" id="copyMsg" aria-live="polite"></p>';
+    }
+    return html;
+  }
+
+  function sigSection(d) {
+    var html = '<h3>Signaturer</h3>';
+    ['diver', 'leader'].forEach(function (role) {
+      var s = d.sig && d.sig[role];
+      html += '<div class="sigbox"><div class="role">' + ROLES[role] + '</div>';
+      if (s) {
+        html += '<div class="sig">' + sigSvg(s.strokes) + '</div>' +
+          '<p class="sigmeta">' + esc(s.name) + ' · ' + esc(fmtStamp(s.at)) + '</p>' +
+          '<button class="btn danger small noprint' + (state.armedSig === role ? ' armed' : '') + '" data-unsign="' + role + '">' +
+          (state.armedSig === role ? 'Tryck igen för att ta bort' : 'Ta bort signatur') + '</button>';
+      } else {
+        html += '<p class="sigmeta">Ej signerad</p><button class="btn small noprint" data-sign="' + role + '">Signera som ' + ROLES[role].toLowerCase() + '</button>';
+      }
+      html += '</div>';
+    });
+    return html;
+  }
+
+  function detailView() {
+    var d = findDive(state.detailId);
+    if (!d) return bookView();
+    var rows = [
+      ['Datum', fmtDate(d.date)], ['Tid', (d.start && d.end) ? d.start + '–' + d.end : ''], ['Bottentid', fmtDur(minutes(d))],
+      ['Maxdjup', fmtNum(num(d.depth)) + ' m'], ['Uppgift', d.task], ['Arbetslag', d.team], ['Bolag', d.company],
+      ['Plats', d.location], ['Hjälm', d.helmet], ['Regulator', d.regulator], ['Anteckningar', d.notes]
+    ].filter(function (r) { return r[1]; });
+    var html = '<button class="back" data-go="book">‹ Dykbok</button><h2>' + esc(fmtDate(d.date)) + '</h2><dl>';
+    rows.forEach(function (r) { html += '<div><dt>' + r[0] + '</dt><dd>' + esc(r[1]) + '</dd></div>'; });
+    html += '</dl>' + sigSection(d);
+    html += '<div class="row"><button class="btn secondary" data-edit>Ändra</button><button class="btn secondary" data-print>Skriv ut / PDF</button></div>' +
+      '<div class="row"><button class="btn danger' + (state.armedDelete ? ' armed' : '') + '" data-delete>' +
+      (state.armedDelete ? 'Tryck igen för att ta bort dyket' : 'Ta bort dyk') + '</button></div>';
+    return html;
+  }
+
+  function render() {
+    if (state.loading) return;
+    var view = state.screen === 'home' ? homeView() : state.screen === 'log' ? formView() : state.screen === 'detail' ? detailView() : bookView();
+    document.getElementById('app').innerHTML = view;
+    var current = state.screen === 'detail' ? 'book' : state.screen;
+    document.getElementById('nav').innerHTML = [['home', 'Hem'], ['log', 'Logga'], ['book', 'Dykbok']].map(function (i) {
+      return '<button data-nav="' + i[0] + '"' + (current === i[0] ? ' aria-current="page"' : '') + '>' + ICONS[i[0]] + i[1] + '</button>';
+    }).join('');
+    var err = document.getElementById('err'); if (err) err.scrollIntoView({ block: 'center' });
+  }
+
+  /* ---------- åtgärder ---------- */
+  function blankForm() { return { date: today(), start: '', end: '', depth: '', task: '', team: '', company: '', location: '', helmet: '', regulator: '', notes: '' }; }
+  function go(screen) {
+    state.screen = screen; state.error = ''; state.armedDelete = false; state.armedSig = ''; state.msg = '';
+    if (screen === 'log') { state.editId = null; state.form = blankForm(); }
+    render(); window.scrollTo(0, 0);
+  }
+  function save() {
+    var f = state.form;
+    if (!f.date) { state.error = 'Fyll i datum.'; return render(); }
+    if (!f.depth.trim() || num(f.depth) <= 0) { state.error = 'Fyll i maxdjup i meter, till exempel 18,5.'; return render(); }
+    var clean = {};
+    Object.keys(f).forEach(function (k) { clean[k] = typeof f[k] === 'string' ? f[k].trim() : f[k]; });
+    if (state.editId) {
+      var old = findDive(state.editId), changed = false;
+      Object.keys(clean).forEach(function (k) { if ((old[k] || '') !== clean[k]) changed = true; });
+      Object.keys(clean).forEach(function (k) { old[k] = clean[k]; });
+      if (changed) delete old.sig;
+      state.detailId = state.editId; state.editId = null; state.screen = 'detail';
+    } else {
+      clean.id = uid(); state.dives = [clean].concat(state.dives); state.screen = 'book';
+    }
+    state.error = ''; state.form = null; persist(); render(); window.scrollTo(0, 0);
+  }
+  function toCsv() {
+    var head = ['Datum', 'Start', 'Slut', 'Maxdjup (m)', 'Uppgift', 'Arbetslag', 'Bolag', 'Plats', 'Hjälm', 'Regulator', 'Anteckningar', 'Dykare signerat', 'Dykledare signerat'];
+    var keys = ['date', 'start', 'end', 'depth', 'task', 'team', 'company', 'location', 'helmet', 'regulator', 'notes'];
+    function q(v) { v = String(v == null ? '' : v); return /[";\n]/.test(v) ? '"' + v.replace(/"/g, '""') + '"' : v; }
+    var lines = [head.join(';')];
+    sorted().forEach(function (d) {
+      var row = keys.map(function (k) { return q(d[k]); });
+      row.push(q(d.sig && d.sig.diver ? d.sig.diver.name + ' ' + fmtStamp(d.sig.diver.at) : ''));
+      row.push(q(d.sig && d.sig.leader ? d.sig.leader.name + ' ' + fmtStamp(d.sig.leader.at) : ''));
+      lines.push(row.join(';'));
+    });
+    return lines.join('\n');
+  }
+  function copyCsv() {
+    var ta = document.getElementById('csv'), msg = document.getElementById('copyMsg');
+    ta.focus(); ta.select(); ta.setSelectionRange(0, ta.value.length);
+    var ok = false; try { ok = document.execCommand('copy'); } catch (e) {}
+    msg.textContent = ok ? 'Kopierat.' : 'Texten är markerad. Håll in och välj Kopiera.';
+  }
+  function backup() {
+    var blob = new Blob([JSON.stringify({ app: 'DykLogg', version: 1, dives: state.dives })], { type: 'application/json' });
+    var a = document.createElement('a');
+    a.href = URL.createObjectURL(blob); a.download = 'dyklogg-kopia-' + today() + '.json';
+    document.body.appendChild(a); a.click(); document.body.removeChild(a);
+    setTimeout(function () { URL.revokeObjectURL(a.href); }, 4000);
+    state.msg = 'Säkerhetskopian sparades som fil i telefonens nedladdningar.'; render();
+  }
+  function restore(file) {
+    var rd = new FileReader();
+    rd.onload = function () {
+      try {
+        var data = JSON.parse(rd.result), incoming = Array.isArray(data) ? data : data.dives;
+        if (!Array.isArray(incoming)) throw new Error('bad');
+        var have = {}; state.dives.forEach(function (d) { have[d.id] = 1; });
+        var added = 0;
+        incoming.forEach(function (d) { if (d && d.id && d.date && !have[d.id]) { state.dives.push(d); added++; } });
+        persist(); state.msg = added + (added === 1 ? ' dyk lades' : ' dyk lades') + ' till från säkerhetskopian.';
+      } catch (e) { state.msg = 'Filen gick inte att läsa. Välj en kopia som du sparat från DykLogg.'; }
+      render();
+    };
+    rd.readAsText(file);
+  }
+
+  /* ---------- händelser ---------- */
+  document.addEventListener('input', function (e) {
+    var k = e.target.getAttribute && e.target.getAttribute('data-k');
+    if (k && state.form) state.form[k] = e.target.value;
+  });
+  document.addEventListener('change', function (e) {
+    if (e.target.id === 'restoreFile' && e.target.files[0]) restore(e.target.files[0]);
+  });
+  document.addEventListener('click', function (e) {
+    var el = e.target.closest('[data-nav],[data-go],[data-open],[data-save],[data-edit],[data-delete],[data-cancel-edit],[data-export],[data-copy],[data-sign],[data-unsign],[data-print],[data-backup],[data-restore]');
+    if (!el) return;
+    if (el.hasAttribute('data-nav') || el.hasAttribute('data-go')) return go(el.getAttribute('data-nav') || el.getAttribute('data-go'));
+    if (el.hasAttribute('data-open')) { state.detailId = el.getAttribute('data-open'); state.screen = 'detail'; state.armedDelete = false; state.armedSig = ''; render(); return window.scrollTo(0, 0); }
+    if (el.hasAttribute('data-save')) return save();
+    if (el.hasAttribute('data-edit')) {
+      var d = findDive(state.detailId); if (!d) return;
+      state.editId = d.id; state.form = Object.assign(blankForm(), d); delete state.form.id; delete state.form.sig;
+      state.screen = 'log'; state.error = ''; render(); return window.scrollTo(0, 0);
+    }
+    if (el.hasAttribute('data-cancel-edit')) { state.screen = 'detail'; state.editId = null; state.form = null; render(); return window.scrollTo(0, 0); }
+    if (el.hasAttribute('data-delete')) {
+      if (!state.armedDelete) { state.armedDelete = true; return render(); }
+      state.dives = state.dives.filter(function (x) { return x.id !== state.detailId; });
+      state.armedDelete = false; state.detailId = null; state.screen = 'book'; persist(); render(); return window.scrollTo(0, 0);
+    }
+    if (el.hasAttribute('data-sign')) return openSignModal(el.getAttribute('data-sign'));
+    if (el.hasAttribute('data-unsign')) {
+      var role = el.getAttribute('data-unsign');
+      if (state.armedSig !== role) { state.armedSig = role; return render(); }
+      var dv = findDive(state.detailId); if (dv && dv.sig) { delete dv.sig[role]; persist(); }
+      state.armedSig = ''; return render();
+    }
+    if (el.hasAttribute('data-print')) return window.print();
+    if (el.hasAttribute('data-export')) { state.exportOpen = !state.exportOpen; return render(); }
+    if (el.hasAttribute('data-copy')) return copyCsv();
+    if (el.hasAttribute('data-backup')) return backup();
+    if (el.hasAttribute('data-restore')) { var fi = document.getElementById('restoreFile'); if (fi) fi.click(); return; }
+  });
+
+  if ('serviceWorker' in navigator && /^https:|^http:\/\/localhost/.test(location.href)) {
+    window.addEventListener('load', function () { navigator.serviceWorker.register('sw.js').catch(function () {}); });
+  }
+  load();
+})();
+</script>
+</body>
+</html>
