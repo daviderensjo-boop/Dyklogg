@@ -121,7 +121,19 @@
   .padwrap canvas { display: block; touch-action: none; cursor: crosshair; }
   .hint { color: var(--muted); font-size: 14px; margin: 4px 0 8px; }
 
+  #printAll { display: none; }
+  .pdoc h1 { font-size: 26px; }
+  .pdoc .psum { margin: 6px 0 18px; color: var(--muted); font-size: 14px; }
+  .pdive { break-inside: avoid; margin: 0 0 18px; }
+  .pdive h3 { margin: 0 0 6px; font-size: 17px; }
+  .pdive dl div { grid-template-columns: 95px 1fr; padding: 5px 0; font-size: 14px; }
+  .psigs { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; margin-top: 8px; }
+  .psigs .role { font-weight: 700; font-size: 13px; margin-bottom: 3px; }
+  .psigs .sig svg { max-height: 60px; }
+  .psigs .sigmeta { margin: 3px 0 0; font-size: 12px; }
   @media print {
+    body.print-all #app, body.print-all nav { display: none !important; }
+    body.print-all #printAll { display: block; }
     nav, .noprint, .back, .row, button { display: none !important; }
     body { background: #fff; padding: 0; }
     #app { max-width: none; padding: 0; }
@@ -131,6 +143,7 @@
 </head>
 <body>
 <div id="app"><p class="loading">Laddar dykboken…</p></div>
+<div id="printAll" class="pdoc" aria-hidden="true"></div>
 <nav aria-label="Huvudmeny"><div class="inner" id="nav"></div></nav>
 
 <script>
@@ -184,6 +197,10 @@
     var seen = {}, out = [];
     state.dives.forEach(function (d) { var v = (d[key] || '').trim(); if (v && !seen[v.toLowerCase()]) { seen[v.toLowerCase()] = 1; out.push(v); } });
     return out;
+  }
+  function avgDepth(list) {
+    if (!list.length) return 0;
+    return list.reduce(function (s, d) { return s + num(d.depth); }, 0) / list.length;
   }
   function sigCount(d) { return d.sig ? (d.sig.diver ? 1 : 0) + (d.sig.leader ? 1 : 0) : 0; }
 
@@ -276,13 +293,13 @@
 
   function homeView() {
     var list = sorted(), total = list.length;
-    var deepest = list.reduce(function (m, d) { return Math.max(m, num(d.depth)); }, 0);
+    var avg = avgDepth(list);
     var mins = list.reduce(function (s, d) { return s + minutes(d); }, 0);
     var h = Math.floor(mins / 60), r = mins % 60;
     var html = '<h1>DykLogg</h1><p class="tag">Din digitala dykbok</p>';
     html += '<div class="stats">' +
       '<div class="stat"><b>' + total + '</b><span>dyk</span></div>' +
-      '<div class="stat"><b>' + fmtNum(deepest) + '<small>m</small></b><span>djupast</span></div>' +
+      '<div class="stat"><b>' + fmtNum(avg) + '<small>m</small></b><span>medeldjup</span></div>' +
       '<div class="stat"><b>' + h + '<small>h</small> ' + r + '<small>min</small></b><span>total tid</span></div></div>';
     var unsigned = list.filter(function (d) { return !(d.sig && d.sig.leader); }).length;
     if (total && unsigned) html += '<p class="note">' + unsigned + (unsigned === 1 ? ' dyk saknar' : ' dyk saknar') + ' dykledarens signatur.</p>';
@@ -349,6 +366,7 @@
       });
       html += '</ul>';
     }
+    if (list.length) html += '<div class="spaced"><button class="btn" data-printall>Spara alla dyk som PDF</button></div>';
     html += '<h3>Säkerhetskopia</h3><p class="hint">Dykboken sparas i den här telefonen. Spara en kopia ibland, särskilt innan du byter telefon.</p>' +
       '<div class="row"><button class="btn secondary small" data-backup>Spara kopia</button>' +
       '<button class="btn secondary small" data-restore>Läs in kopia</button></div>' +
@@ -450,6 +468,32 @@
     var ok = false; try { ok = document.execCommand('copy'); } catch (e) {}
     msg.textContent = ok ? 'Kopierat.' : 'Texten är markerad. Håll in och välj Kopiera.';
   }
+  function printAll() {
+    var list = sorted().reverse();
+    var mins = list.reduce(function (s, d) { return s + minutes(d); }, 0);
+    var h = Math.floor(mins / 60), r = mins % 60;
+    var html = '<h1>DykLogg – dykbok</h1><p class="psum">' + list.length + ' dyk · medeldjup ' + fmtNum(avgDepth(list)) +
+      ' m · total tid ' + h + ' h ' + r + ' min · utskriven ' + esc(fmtDate(today())) + '</p>';
+    list.forEach(function (d) {
+      var rows = [
+        ['Tid', (d.start && d.end) ? d.start + '–' + d.end : ''], ['Bottentid', fmtDur(minutes(d))],
+        ['Maxdjup', fmtNum(num(d.depth)) + ' m'], ['Uppgift', d.task], ['Arbetslag', d.team], ['Bolag', d.company],
+        ['Plats', d.location], ['Hjälm', d.helmet], ['Regulator', d.regulator], ['Anteckningar', d.notes]
+      ].filter(function (x) { return x[1]; });
+      html += '<div class="pdive"><h3>' + esc(fmtDate(d.date)) + '</h3><dl>' +
+        rows.map(function (x) { return '<div><dt>' + x[0] + '</dt><dd>' + esc(x[1]) + '</dd></div>'; }).join('') + '</dl><div class="psigs">';
+      ['diver', 'leader'].forEach(function (role) {
+        var s = d.sig && d.sig[role];
+        html += '<div><div class="role">' + ROLES[role] + '</div>' +
+          (s ? '<div class="sig">' + sigSvg(s.strokes) + '</div><p class="sigmeta">' + esc(s.name) + ' · ' + esc(fmtStamp(s.at)) + '</p>'
+             : '<p class="sigmeta">Ej signerad</p>') + '</div>';
+      });
+      html += '</div></div>';
+    });
+    document.getElementById('printAll').innerHTML = html;
+    document.body.classList.add('print-all');
+    window.print();
+  }
   function backup() {
     var blob = new Blob([JSON.stringify({ app: 'DykLogg', version: 1, dives: state.dives })], { type: 'application/json' });
     var a = document.createElement('a');
@@ -483,7 +527,7 @@
     if (e.target.id === 'restoreFile' && e.target.files[0]) restore(e.target.files[0]);
   });
   document.addEventListener('click', function (e) {
-    var el = e.target.closest('[data-nav],[data-go],[data-open],[data-save],[data-edit],[data-delete],[data-cancel-edit],[data-export],[data-copy],[data-sign],[data-unsign],[data-print],[data-backup],[data-restore]');
+    var el = e.target.closest('[data-nav],[data-go],[data-open],[data-save],[data-edit],[data-delete],[data-cancel-edit],[data-export],[data-copy],[data-sign],[data-unsign],[data-print],[data-printall],[data-backup],[data-restore]');
     if (!el) return;
     if (el.hasAttribute('data-nav') || el.hasAttribute('data-go')) return go(el.getAttribute('data-nav') || el.getAttribute('data-go'));
     if (el.hasAttribute('data-open')) { state.detailId = el.getAttribute('data-open'); state.screen = 'detail'; state.armedDelete = false; state.armedSig = ''; render(); return window.scrollTo(0, 0); }
@@ -506,7 +550,8 @@
       var dv = findDive(state.detailId); if (dv && dv.sig) { delete dv.sig[role]; persist(); }
       state.armedSig = ''; return render();
     }
-    if (el.hasAttribute('data-print')) return window.print();
+    if (el.hasAttribute('data-print')) { document.body.classList.remove('print-all'); return window.print(); }
+    if (el.hasAttribute('data-printall')) return printAll();
     if (el.hasAttribute('data-export')) { state.exportOpen = !state.exportOpen; return render(); }
     if (el.hasAttribute('data-copy')) return copyCsv();
     if (el.hasAttribute('data-backup')) return backup();
