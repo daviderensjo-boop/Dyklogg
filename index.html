@@ -132,6 +132,7 @@
   .padwrap canvas { display: block; touch-action: none; cursor: crosshair; }
   .hint { color: var(--muted); font-size: 14px; margin: 4px 0 8px; }
 
+  .credit { margin: 28px 0 0; text-align: center; font-size: 13px; color: var(--muted); }
   #printAll { display: none; }
   .pdoc h1 { font-size: 26px; }
   .pdoc .psum { margin: 6px 0 18px; color: var(--muted); font-size: 14px; }
@@ -163,7 +164,7 @@
   var mem = {};
   var state = {
     loading: true, dives: [], screen: 'home', detailId: null, editId: null,
-    form: null, error: '', exportOpen: false, armedDelete: false, armedSig: '', storageWarn: false, msg: ''
+    form: null, error: '', armedDelete: false, armedSig: '', storageWarn: false, msg: ''
   };
   var FIELDS = [
     ['task', 'Uppgift'], ['team', 'Arbetslag'], ['company', 'Bolag'],
@@ -331,6 +332,7 @@
       html += '</ul>';
     }
     html += '<div class="spaced"><button class="btn" data-go="log">Logga nytt dyk</button></div>';
+    html += '<p class="credit">Gjord av David Erensjö · © 2026</p>';
     return html;
   }
 
@@ -377,16 +379,13 @@
       });
       html += '</ul>';
     }
-    if (list.length) html += '<div class="spaced"><button class="btn" data-printall>Spara alla dyk som PDF</button></div>';
+    if (list.length) html += '<div class="spaced"><button class="btn" data-printall>Spara alla dyk som PDF</button>' +
+      '<div class="row"><button class="btn secondary" data-xlsx>Spara som Excel-fil</button></div></div>';
     html += '<h3>Säkerhetskopia</h3><p class="hint">Dykboken sparas i den här telefonen. Spara en kopia ibland, särskilt innan du byter telefon.</p>' +
       '<div class="row"><button class="btn secondary small" data-backup>Spara kopia</button>' +
       '<button class="btn secondary small" data-restore>Läs in kopia</button></div>' +
       '<input type="file" id="restoreFile" accept=".json,application/json" hidden>' +
-      '<div class="row"><button class="btn secondary small" data-export>' + (state.exportOpen ? 'Dölj tabell' : 'Visa som tabell (Excel)') + '</button></div>';
-    if (state.exportOpen) {
-      html += '<textarea class="csv" id="csv" readonly>' + esc(toCsv()) + '</textarea>' +
-        '<div class="row"><button class="btn small" data-copy>Kopiera</button></div><p class="tag" id="copyMsg" aria-live="polite"></p>';
-    }
+      '';
     return html;
   }
 
@@ -460,31 +459,99 @@
     }
     state.error = ''; state.form = null; persist(); render(); window.scrollTo(0, 0);
   }
-  function toCsv() {
-    var head = ['Datum', 'Start', 'Slut', 'Maxdjup (m)', 'Uppgift', 'Arbetslag', 'Bolag', 'Plats', 'Hjälm', 'Regulator', 'Anteckningar', 'Dykare signerat', 'Dykledare signerat'];
-    var keys = ['date', 'start', 'end', 'depth', 'task', 'team', 'company', 'location', 'helmet', 'regulator', 'notes'];
-    function q(v) { v = String(v == null ? '' : v); return /[";\n]/.test(v) ? '"' + v.replace(/"/g, '""') + '"' : v; }
-    var lines = [head.join(';')];
-    sorted().forEach(function (d) {
-      var row = keys.map(function (k) { return q(d[k]); });
-      row.push(q(d.sig && d.sig.diver ? d.sig.diver.name + ' ' + fmtStamp(d.sig.diver.at) : ''));
-      row.push(q(d.sig && d.sig.leader ? d.sig.leader.name + ' ' + fmtStamp(d.sig.leader.at) : ''));
-      lines.push(row.join(';'));
-    });
-    return lines.join('\n');
+  /* ---------- Excel-fil (.xlsx), byggd utan bibliotek ---------- */
+  var XLSX_MIME = 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet';
+  function crc32(buf) {
+    var t = crc32.t;
+    if (!t) { t = crc32.t = []; for (var n = 0; n < 256; n++) { var c0 = n; for (var k = 0; k < 8; k++) c0 = c0 & 1 ? 0xEDB88320 ^ (c0 >>> 1) : c0 >>> 1; t[n] = c0 >>> 0; } }
+    var c = 0xFFFFFFFF;
+    for (var i = 0; i < buf.length; i++) c = t[(c ^ buf[i]) & 255] ^ (c >>> 8);
+    return (c ^ 0xFFFFFFFF) >>> 0;
   }
-  function copyCsv() {
-    var ta = document.getElementById('csv'), msg = document.getElementById('copyMsg');
-    ta.focus(); ta.select(); ta.setSelectionRange(0, ta.value.length);
-    var ok = false; try { ok = document.execCommand('copy'); } catch (e) {}
-    msg.textContent = ok ? 'Kopierat.' : 'Texten är markerad. Håll in och välj Kopiera.';
+  function zipStore(files, mime) {
+    var enc = new TextEncoder(), chunks = [], central = [], offset = 0;
+    files.forEach(function (f) {
+      var name = enc.encode(f.name), data = enc.encode(f.text), crc = crc32(data);
+      var lh = new DataView(new ArrayBuffer(30));
+      lh.setUint32(0, 0x04034b50, true); lh.setUint16(4, 20, true); lh.setUint16(6, 0x0800, true);
+      lh.setUint16(12, 0x21, true); lh.setUint32(14, crc, true); lh.setUint32(18, data.length, true);
+      lh.setUint32(22, data.length, true); lh.setUint16(26, name.length, true);
+      chunks.push(new Uint8Array(lh.buffer), name, data);
+      var ch = new DataView(new ArrayBuffer(46));
+      ch.setUint32(0, 0x02014b50, true); ch.setUint16(4, 20, true); ch.setUint16(6, 20, true); ch.setUint16(8, 0x0800, true);
+      ch.setUint16(14, 0x21, true); ch.setUint32(16, crc, true); ch.setUint32(20, data.length, true);
+      ch.setUint32(24, data.length, true); ch.setUint16(28, name.length, true); ch.setUint32(42, offset, true);
+      central.push(new Uint8Array(ch.buffer), name);
+      offset += 30 + name.length + data.length;
+    });
+    var cdSize = 0; central.forEach(function (c) { cdSize += c.length; });
+    var end = new DataView(new ArrayBuffer(22));
+    end.setUint32(0, 0x06054b50, true); end.setUint16(8, files.length, true); end.setUint16(10, files.length, true);
+    end.setUint32(12, cdSize, true); end.setUint32(16, offset, true);
+    return new Blob(chunks.concat(central, [new Uint8Array(end.buffer)]), { type: mime });
+  }
+  function xmlEsc(v) {
+    return String(v).replace(/[\u0000-\u0008\u000B\u000C\u000E-\u001F]/g, '').replace(/[&<>"]/g, function (c) {
+      return { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c];
+    });
+  }
+  function xcell(col, row, v, bold) {
+    var ref = String.fromCharCode(65 + col) + row, st = bold ? ' s="1"' : '';
+    if (typeof v === 'number') return '<c r="' + ref + '"' + st + '><v>' + v + '</v></c>';
+    v = String(v == null ? '' : v);
+    if (v === '') return '';
+    return '<c r="' + ref + '" t="inlineStr"' + st + '><is><t xml:space="preserve">' + xmlEsc(v) + '</t></is></c>';
+  }
+  function buildXlsx() {
+    var head = ['Datum', 'Start', 'Slut', 'Bottentid (min)', 'Maxdjup (m)', 'Uppgift', 'Arbetslag', 'Bolag', 'Plats', 'Hjälm', 'Regulator', 'Anteckningar', 'Dykare', 'Dykare signerad', 'Dykledare', 'Dykledare signerad'];
+    var widths = [12, 8, 8, 15, 12, 22, 18, 18, 18, 16, 16, 34, 18, 20, 18, 20];
+    var rows = [head.map(function (h, i) { return xcell(i, 1, h, true); }).join('')];
+    sorted().reverse().forEach(function (d, idx) {
+      var r = idx + 2, sd = d.sig && d.sig.diver, sl = d.sig && d.sig.leader;
+      var vals = [d.date, d.start, d.end, minutes(d) || '', num(d.depth), d.task, d.team, d.company, d.location, d.helmet, d.regulator, d.notes,
+        sd ? sd.name : '', sd ? fmtStamp(sd.at) : '', sl ? sl.name : '', sl ? fmtStamp(sl.at) : ''];
+      rows.push(vals.map(function (v, i) { return xcell(i, r, v, false); }).join(''));
+    });
+    var sheet = '<?xml version="1.0" encoding="UTF-8" standalone="yes"?><worksheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main">' +
+      '<sheetViews><sheetView workbookViewId="0"><pane ySplit="1" topLeftCell="A2" activePane="bottomLeft" state="frozen"/></sheetView></sheetViews>' +
+      '<cols>' + widths.map(function (w, i) { return '<col min="' + (i + 1) + '" max="' + (i + 1) + '" width="' + w + '" customWidth="1"/>'; }).join('') + '</cols>' +
+      '<sheetData>' + rows.map(function (x, i) { return '<row r="' + (i + 1) + '">' + x + '</row>'; }).join('') + '</sheetData></worksheet>';
+    var X = '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>';
+    return zipStore([
+      { name: '[Content_Types].xml', text: X + '<Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types"><Default Extension="rels" ContentType="application/vnd.openxmlformats-package.relationships+xml"/><Default Extension="xml" ContentType="application/xml"/><Override PartName="/xl/workbook.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet.main+xml"/><Override PartName="/xl/worksheets/sheet1.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.worksheet+xml"/><Override PartName="/xl/styles.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.styles+xml"/></Types>' },
+      { name: '_rels/.rels', text: X + '<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships"><Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/officeDocument" Target="xl/workbook.xml"/></Relationships>' },
+      { name: 'xl/workbook.xml', text: X + '<workbook xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main" xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships"><sheets><sheet name="Dykbok" sheetId="1" r:id="rId1"/></sheets></workbook>' },
+      { name: 'xl/_rels/workbook.xml.rels', text: X + '<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships"><Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/worksheet" Target="worksheets/sheet1.xml"/><Relationship Id="rId2" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/styles" Target="styles.xml"/></Relationships>' },
+      { name: 'xl/styles.xml', text: X + '<styleSheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main"><fonts count="2"><font><sz val="11"/><name val="Calibri"/></font><font><b/><sz val="11"/><name val="Calibri"/></font></fonts><fills count="2"><fill><patternFill patternType="none"/></fill><fill><patternFill patternType="gray125"/></fill></fills><borders count="1"><border><left/><right/><top/><bottom/><diagonal/></border></borders><cellStyleXfs count="1"><xf numFmtId="0" fontId="0" fillId="0" borderId="0"/></cellStyleXfs><cellXfs count="2"><xf numFmtId="0" fontId="0" fillId="0" borderId="0" xfId="0"/><xf numFmtId="0" fontId="1" fillId="0" borderId="0" xfId="0" applyFont="1"/></cellXfs><cellStyles count="1"><cellStyle name="Normal" xfId="0" builtinId="0"/></cellStyles></styleSheet>' },
+      { name: 'xl/worksheets/sheet1.xml', text: sheet }
+    ], XLSX_MIME);
+  }
+  function saveBlob(blob, name) {
+    var a = document.createElement('a');
+    a.href = URL.createObjectURL(blob); a.download = name;
+    document.body.appendChild(a); a.click(); document.body.removeChild(a);
+    setTimeout(function () { URL.revokeObjectURL(a.href); }, 4000);
+  }
+  function exportXlsx() {
+    var blob = buildXlsx(), name = 'dyklogg-' + today() + '.xlsx', file = null;
+    try { file = new File([blob], name, { type: XLSX_MIME }); } catch (e) {}
+    if (file && navigator.canShare && navigator.canShare({ files: [file] })) {
+      navigator.share({ files: [file], title: 'DykLogg' }).then(function () {
+        state.msg = 'Excel-filen är delad eller sparad.'; render();
+      }).catch(function (e) {
+        if (e && e.name === 'AbortError') return;
+        saveBlob(blob, name); state.msg = 'Excel-filen sparades i telefonens nedladdningar.'; render();
+      });
+      return;
+    }
+    saveBlob(blob, name); state.msg = 'Excel-filen sparades i telefonens nedladdningar.'; render();
   }
   function printAll() {
     var list = sorted().reverse();
     var mins = list.reduce(function (s, d) { return s + minutes(d); }, 0);
     var h = Math.floor(mins / 60), r = mins % 60;
     var html = '<h1>DykLogg – dykbok</h1><p class="psum">' + list.length + ' dyk · medeldjup ' + fmtNum(avgDepth(list)) +
-      ' m · total tid ' + h + ' h ' + r + ' min · utskriven ' + esc(fmtDate(today())) + '</p>';
+      ' m · total tid ' + h + ' h ' + r + ' min · utskriven ' + esc(fmtDate(today())) + '<br>Gjord av David Erensjö · © 2026</p>';
     list.forEach(function (d) {
       var rows = [
         ['Tid', (d.start && d.end) ? d.start + '–' + d.end : ''], ['Bottentid', fmtDur(minutes(d))],
@@ -538,7 +605,7 @@
     if (e.target.id === 'restoreFile' && e.target.files[0]) restore(e.target.files[0]);
   });
   document.addEventListener('click', function (e) {
-    var el = e.target.closest('[data-nav],[data-go],[data-open],[data-save],[data-edit],[data-delete],[data-cancel-edit],[data-export],[data-copy],[data-sign],[data-unsign],[data-print],[data-printall],[data-backup],[data-restore]');
+    var el = e.target.closest('[data-nav],[data-go],[data-open],[data-save],[data-edit],[data-delete],[data-cancel-edit],[data-xlsx],[data-sign],[data-unsign],[data-print],[data-printall],[data-backup],[data-restore]');
     if (!el) return;
     if (el.hasAttribute('data-nav') || el.hasAttribute('data-go')) return go(el.getAttribute('data-nav') || el.getAttribute('data-go'));
     if (el.hasAttribute('data-open')) { state.detailId = el.getAttribute('data-open'); state.screen = 'detail'; state.armedDelete = false; state.armedSig = ''; render(); return window.scrollTo(0, 0); }
@@ -563,8 +630,7 @@
     }
     if (el.hasAttribute('data-print')) { document.body.classList.remove('print-all'); return window.print(); }
     if (el.hasAttribute('data-printall')) return printAll();
-    if (el.hasAttribute('data-export')) { state.exportOpen = !state.exportOpen; return render(); }
-    if (el.hasAttribute('data-copy')) return copyCsv();
+    if (el.hasAttribute('data-xlsx')) return exportXlsx();
     if (el.hasAttribute('data-backup')) return backup();
     if (el.hasAttribute('data-restore')) { var fi = document.getElementById('restoreFile'); if (fi) fi.click(); return; }
   });
