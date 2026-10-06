@@ -147,6 +147,26 @@
   .chip.add { border-style: dashed; border-color: var(--sea); color: var(--sea); }
   .inline { border-left: 4px solid var(--sea); padding: 2px 0 2px 12px; margin: 0 0 16px; }
   .tpl .sub b { color: var(--ink); }
+  .list button { -webkit-touch-callout: none; -webkit-user-select: none; user-select: none; }
+  .list .liop { display: flex; gap: 12px; align-items: flex-start; }
+  .list .liop .body { flex: 1; min-width: 0; display: block; }
+  .chk { display: none; flex: none; width: 24px; height: 24px; margin-top: 2px; border: 2px solid var(--ink); border-radius: 50%; position: relative; }
+  .list.selecting .chk { display: block; }
+  .liop[aria-checked="true"] { background: rgba(31, 107, 115, .10); }
+  .liop[aria-checked="true"] .chk { background: var(--flag); border-color: var(--flag); }
+  .liop[aria-checked="true"] .chk::after { content: ""; position: absolute; left: 6px; top: 2px; width: 6px; height: 11px;
+    border: solid #fff; border-width: 0 2.5px 2.5px 0; transform: rotate(45deg); }
+  .nostat { font-style: italic; }
+  .btn[disabled] { opacity: .45; }
+  .selbar { position: fixed; left: 0; right: 0; bottom: calc(64px + env(safe-area-inset-bottom)); z-index: 9;
+            background: var(--white); border-top: 2px solid var(--ink); }
+  .selbar .in2 { max-width: 520px; margin: 0 auto; padding: 10px 20px 12px; }
+  .selbar .toprow { display: flex; justify-content: space-between; align-items: center; font-weight: 700; margin-bottom: 8px; }
+  .selbar .toprow button { background: none; border: 0; color: var(--sea); font-weight: 700; padding: 6px 0 6px 14px; cursor: pointer; font-size: 15px; }
+  .backdrop { position: fixed; inset: 0; background: rgba(11, 40, 48, .55); z-index: 40; }
+  .panel { position: fixed; left: 0; right: 0; bottom: 0; z-index: 41; background: var(--bg); max-height: 80%; overflow-y: auto;
+           padding: 18px 20px calc(18px + env(safe-area-inset-bottom)); border-radius: 16px 16px 0 0; }
+  .panel > div { max-width: 520px; margin: 0 auto; }
   #printAll { display: none; }
   .pdoc h1 { font-size: 26px; }
   .pdoc .psum { margin: 6px 0 18px; color: var(--muted); font-size: 14px; }
@@ -160,7 +180,7 @@
   @media print {
     body.print-all #app, body.print-all nav { display: none !important; }
     body.print-all #printAll { display: block; }
-    nav, .noprint, .back, .row, button { display: none !important; }
+    nav, .noprint, .back, .row, button, .selbar, .panel, .backdrop { display: none !important; }
     body { background: #fff; padding: 0; }
     #app { max-width: none; padding: 0; }
     .sig, dl, .sigbox { break-inside: avoid; }
@@ -181,8 +201,10 @@
   var state = {
     loading: true, dives: [], folders: [], templates: [], screen: 'home', detailId: null, editId: null,
     form: null, error: '', armedDelete: false, armedSig: '', storageWarn: false, msg: '',
-    folderFilter: 'all', folderEdit: null, armedFolderDel: false, tplForm: null, tplEditId: null, armedTplDel: false, tplApplied: ''
+    folderFilter: 'all', folderEdit: null, armedFolderDel: false, tplForm: null, tplEditId: null, armedTplDel: false, tplApplied: '',
+    selecting: false, selected: {}, moveOpen: false
   };
+  var pressTimer = null, pressFired = false, pressStart = null;
   var FIELDS = [
     ['task', 'Uppgift'], ['team', 'Arbetslag'], ['company', 'Bolag'],
     ['location', 'Plats'], ['helmet', 'Hjälm'], ['regulator', 'Regulator']
@@ -220,6 +242,33 @@
   function fmtDur(m) { if (!m) return ''; var h = Math.floor(m / 60), r = m % 60; return h ? h + ' h ' + (r ? r + ' min' : '') : r + ' min'; }
   function sorted() {
     return state.dives.slice().sort(function (a, b) { return (b.date + (b.start || '')).localeCompare(a.date + (a.start || '')); });
+  }
+  function selIds() { return Object.keys(state.selected).filter(function (id) { return state.selected[id]; }); }
+  function clearSelection() {
+    state.selecting = false; state.selected = {}; state.moveOpen = false;
+    if (state.folderEdit && state.folderEdit.mode === 'move') state.folderEdit = null;
+  }
+  function toggleSelect(id, forceOn) {
+    if (!state.selecting) { state.selecting = true; state.selected = {}; }
+    if (forceOn) state.selected[id] = true;
+    else if (state.selected[id]) delete state.selected[id];
+    else state.selected[id] = true;
+    render();
+  }
+  function moveSelected(fid) {
+    var n = 0;
+    state.dives.forEach(function (d) { if (state.selected[d.id]) { d.folder = fid; n++; } });
+    var fname = folderName(fid);
+    state.msg = n + ' dyk flyttades ' + (fname ? 'till mappen ' + fname + '.' : 'ut ur mappen.');
+    clearSelection(); persist(); render(); window.scrollTo(0, 0);
+  }
+  function toggleStats() {
+    var chosen = selIds().map(findDive).filter(Boolean);
+    if (!chosen.length) return;
+    var allIn = chosen.every(function (d) { return !d.noStats; });
+    chosen.forEach(function (d) { if (allIn) d.noStats = true; else delete d.noStats; });
+    state.msg = chosen.length + ' dyk ' + (allIn ? 'räknas inte längre med i statistiken.' : 'räknas nu med i statistiken.');
+    clearSelection(); persist(); render(); window.scrollTo(0, 0);
   }
   function findFolder(id) { return state.folders.filter(function (f) { return f.id === id; })[0]; }
   function findTpl(id) { return state.templates.filter(function (t) { return t.id === id; })[0]; }
@@ -345,14 +394,16 @@
 
   function homeView() {
     var list = sorted(), total = list.length;
-    var avg = avgDepth(list);
-    var mins = list.reduce(function (s, d) { return s + minutes(d); }, 0);
+    var counted = list.filter(function (d) { return !d.noStats; });
+    var avg = avgDepth(counted);
+    var mins = counted.reduce(function (s, d) { return s + minutes(d); }, 0);
     var h = Math.floor(mins / 60), r = mins % 60;
     var html = '<h1>DykLogg</h1><p class="tag">Din digitala dykbok</p>';
     html += '<div class="stats">' +
-      '<div class="stat"><b>' + total + '</b><span>dyk</span></div>' +
+      '<div class="stat"><b>' + counted.length + '</b><span>dyk</span></div>' +
       '<div class="stat"><b>' + fmtNum(avg) + '<small>m</small></b><span>medeldjup</span></div>' +
       '<div class="stat"><b>' + h + '<small>h</small> ' + r + '<small>min</small></b><span>total tid</span></div></div>';
+    if (total && counted.length !== total) html += '<p class="hint">Statistiken räknar ' + counted.length + ' av ' + total + ' dyk. Du ändrar det i Dykbok genom att markera dyk.</p>';
     var unsigned = list.filter(function (d) { return !(d.sig && d.sig.leader); }).length;
     if (total && unsigned) html += '<p class="note">' + unsigned + (unsigned === 1 ? ' dyk saknar' : ' dyk saknar') + ' dykledarens signatur.</p>';
     if (state.storageWarn) html += '<p class="note">Dykboken kan inte sparas permanent här. Öppna appen från hemskärmen eller i Chrome.</p>';
@@ -417,13 +468,13 @@
     });
     html += '<button class="chip add" data-folder-new>+ Ny mapp</button></div>';
 
-    if (state.folderEdit) {
+    if (state.folderEdit && state.folderEdit.mode !== 'move') {
       var fe = state.folderEdit;
       html += '<div class="inline">' + (fe.error ? '<p class="err">' + esc(fe.error) + '</p>' : '') +
         '<label class="f"><span>' + (fe.mode === 'new' ? 'Namn på ny mapp' : 'Nytt namn på mappen') + '</span>' +
         '<input class="in" type="text" data-fe maxlength="40" autocomplete="off" value="' + esc(fe.value) + '"></label>' +
         '<div class="row"><button class="btn small" data-folder-save>Spara</button><button class="btn secondary small" data-folder-cancel>Avbryt</button></div></div>';
-    } else if (fol) {
+    } else if (fol && !state.folderEdit) {
       html += '<div class="row" style="margin:0 0 14px"><button class="btn secondary small" data-folder-rename>Byt namn</button>' +
         '<button class="btn danger small' + (state.armedFolderDel ? ' armed' : '') + '" data-folder-del>' +
         (state.armedFolderDel ? 'Tryck igen (dyken blir kvar)' : 'Ta bort mappen') + '</button></div>';
@@ -434,21 +485,27 @@
     } else if (!list.length) {
       html += '<div class="empty"><b>Mappen är tom</b>Välj mappen när du loggar ett dyk, eller flytta ett dyk via Ändra.</div>';
     } else {
-      html += '<ul class="list">';
+      if (!state.selecting && list.length) html += '<div class="chips" style="margin:0 0 6px"><button class="chip" data-sel-start>Markera dyk</button></div>' +
+        (list.length > 1 ? '<p class="hint" style="margin:0 0 10px">Tips: håll in ett dyk för att markera flera och flytta dem till en mapp.</p>' : '');
+      html += '<ul class="list' + (state.selecting ? ' selecting' : '') + '">';
       list.forEach(function (d) {
         var fn = !fol ? folderName(d.folder) : '';
         var sub = [d.location, d.task].filter(Boolean).join(' · ');
         var line2 = [(d.start && d.end) ? d.start + '–' + d.end : '', d.company].filter(Boolean).join(' · ');
-        var sc = sigCount(d);
+        var sc = sigCount(d), on = !!state.selected[d.id];
         var sigLine = sc === 2 ? '<span class="sig-ok">Signerad av dykare och dykledare</span>'
           : sc === 1 ? '<span class="sig-no">Signerad av ' + (d.sig.diver ? 'dykare' : 'dykledare') + ', saknar ' + (d.sig.diver ? 'dykledare' : 'dykare') + '</span>'
           : '<span class="sig-no">Ej signerad</span>';
-        html += '<li><button data-open="' + esc(d.id) + '"><div class="top"><strong>' + esc(fmtDate(d.date)) + '</strong><span class="depth">' + fmtNum(num(d.depth)) + ' m</span></div>' +
+        html += '<li><button class="liop" data-open="' + esc(d.id) + '"' + (state.selecting ? ' role="checkbox" aria-checked="' + on + '"' : '') + '>' +
+          '<span class="chk" aria-hidden="true"></span><span class="body">' +
+          '<div class="top"><strong>' + esc(fmtDate(d.date)) + '</strong><span class="depth">' + fmtNum(num(d.depth)) + ' m</span></div>' +
           (fn ? '<div class="sub">Mapp: ' + esc(fn) + '</div>' : '') +
           (sub ? '<div class="sub">' + esc(sub) + '</div>' : '') + (line2 ? '<div class="sub">' + esc(line2) + '</div>' : '') +
-          '<div class="sub">' + sigLine + '</div></button></li>';
+          (d.noStats ? '<div class="sub nostat">Räknas inte med i statistiken</div>' : '') +
+          '<div class="sub">' + sigLine + '</div></span></button></li>';
       });
       html += '</ul>';
+      if (state.selecting) html += '<div style="height:150px"></div>';
     }
     if (list.length) html += '<div class="spaced"><button class="btn" data-printall>' + (fol ? 'Spara mappen som PDF' : 'Spara alla dyk som PDF') + '</button>' +
       '<div class="row"><button class="btn secondary" data-xlsx>' + (fol ? 'Spara mappen som Excel-fil' : 'Spara som Excel-fil') + '</button></div></div>';
@@ -468,6 +525,31 @@
       '<div class="row"><button class="btn secondary small" data-backup>Spara kopia</button>' +
       '<button class="btn secondary small" data-restore>Läs in kopia</button></div>' +
       '<input type="file" id="restoreFile" accept=".json,application/json" hidden>';
+
+    if (state.selecting) {
+      var ids = selIds(), n = ids.length, chosen = ids.map(findDive).filter(Boolean);
+      var allIn = chosen.length > 0 && chosen.every(function (d) { return !d.noStats; });
+      html += '<div class="selbar" role="toolbar" aria-label="Åtgärder för markerade dyk"><div class="in2">' +
+        '<div class="toprow"><span>' + n + (n === 1 ? ' dyk markerat' : ' dyk markerade') + '</span><span>' +
+        '<button data-sel-all>' + (n && n === list.length ? 'Avmarkera alla' : 'Markera alla') + '</button>' +
+        '<button data-sel-cancel>Klar</button></span></div>' +
+        '<div class="row" style="margin-top:0"><button class="btn small" data-move-open' + (n ? '' : ' disabled') + '>Flytta till mapp</button>' +
+        '<button class="btn secondary small" data-stat-toggle' + (n ? '' : ' disabled') + '>' + (allIn ? 'Ta bort från statistik' : 'Ta med i statistik') + '</button></div></div></div>';
+      if (state.moveOpen) {
+        var mfe = state.folderEdit && state.folderEdit.mode === 'move' ? state.folderEdit : null;
+        html += '<div class="backdrop" data-move-cancel></div><div class="panel" role="dialog" aria-modal="true" aria-label="Flytta till mapp"><div>' +
+          '<h3 style="margin-top:0">Flytta ' + n + ' dyk till …</h3><div class="chips">' +
+          '<button class="chip" data-move-to="">Ingen mapp</button>' +
+          state.folders.map(function (f) { return '<button class="chip" data-move-to="' + esc(f.id) + '">' + esc(f.name) + '</button>'; }).join('') +
+          '<button class="chip add" data-move-new>+ Ny mapp</button></div>';
+        if (mfe) {
+          html += (mfe.error ? '<p class="err">' + esc(mfe.error) + '</p>' : '') +
+            '<label class="f"><span>Namn på ny mapp</span><input class="in" type="text" data-fe maxlength="40" autocomplete="off" value="' + esc(mfe.value) + '"></label>' +
+            '<button class="btn small" data-folder-save>Skapa och flytta</button>';
+        }
+        html += '<div class="row"><button class="btn secondary small" data-move-cancel>Avbryt</button></div></div></div>';
+      }
+    }
     return html;
   }
 
@@ -542,6 +624,7 @@
   function go(screen) {
     state.screen = screen; state.error = ''; state.armedDelete = false; state.armedSig = ''; state.msg = '';
     state.folderEdit = null; state.armedFolderDel = false; state.armedTplDel = false; state.tplApplied = '';
+    clearSelection();
     if (screen === 'log') { state.editId = null; state.form = blankForm(); var af = activeFolder(); if (af) state.form.folder = af.id; }
     render(); window.scrollTo(0, 0);
   }
@@ -567,6 +650,7 @@
     if (!name) { fe.error = 'Skriv ett namn.'; return render(); }
     var dup = state.folders.some(function (f) { return f.name.toLowerCase() === name.toLowerCase() && f.id !== fe.id; });
     if (dup) { fe.error = 'Det finns redan en mapp med det namnet.'; return render(); }
+    if (fe.mode === 'move') { var mf = { id: uid(), name: name }; state.folders.push(mf); state.folderEdit = null; return moveSelected(mf.id); }
     if (fe.mode === 'new') { var nf = { id: uid(), name: name }; state.folders.push(nf); state.folderFilter = nf.id; }
     else { var f = findFolder(fe.id); if (f) f.name = name; }
     state.folderEdit = null; persist(); render();
@@ -763,10 +847,43 @@
     syncField(e.target);
     if (e.target.id === 'restoreFile' && e.target.files[0]) restore(e.target.files[0]);
   });
+  /* håll in ett dyk i Dykbok för att börja markera */
+  document.addEventListener('pointerdown', function (e) {
+    pressFired = false; clearTimeout(pressTimer);
+    if (state.screen !== 'book' || state.selecting || !e.target.closest) return;
+    var li = e.target.closest('[data-open]'); if (!li) return;
+    pressStart = { x: e.clientX, y: e.clientY };
+    pressTimer = setTimeout(function () {
+      pressFired = true;
+      try { if (navigator.vibrate) navigator.vibrate(15); } catch (x) {}
+      toggleSelect(li.getAttribute('data-open'), true);
+    }, 500);
+  });
+  document.addEventListener('pointermove', function (e) {
+    if (pressTimer && pressStart && (Math.abs(e.clientX - pressStart.x) > 10 || Math.abs(e.clientY - pressStart.y) > 10)) { clearTimeout(pressTimer); pressTimer = null; }
+  });
+  ['pointerup', 'pointercancel'].forEach(function (t) { document.addEventListener(t, function () { clearTimeout(pressTimer); pressTimer = null; }); });
+  document.addEventListener('contextmenu', function (e) {
+    if (e.target.closest && e.target.closest('.liop')) e.preventDefault();
+  });
   document.addEventListener('click', function (e) {
-    var el = e.target.closest('[data-nav],[data-go],[data-open],[data-save],[data-edit],[data-delete],[data-cancel-edit],[data-xlsx],[data-folder],[data-folder-new],[data-folder-save],[data-folder-cancel],[data-folder-rename],[data-folder-del],[data-tpl-new],[data-tpl-edit],[data-tpl-save],[data-tpl-del],[data-tpl-use],[data-sign],[data-unsign],[data-print],[data-printall],[data-backup],[data-restore]');
+    if (pressFired) { pressFired = false; return; }
+    var el = e.target.closest('[data-nav],[data-go],[data-open],[data-save],[data-edit],[data-delete],[data-cancel-edit],[data-xlsx],[data-sel-start],[data-sel-all],[data-sel-cancel],[data-move-open],[data-move-to],[data-move-new],[data-move-cancel],[data-stat-toggle],[data-folder],[data-folder-new],[data-folder-save],[data-folder-cancel],[data-folder-rename],[data-folder-del],[data-tpl-new],[data-tpl-edit],[data-tpl-save],[data-tpl-del],[data-tpl-use],[data-sign],[data-unsign],[data-print],[data-printall],[data-backup],[data-restore]');
     if (!el) return;
     if (el.hasAttribute('data-nav') || el.hasAttribute('data-go')) return go(el.getAttribute('data-nav') || el.getAttribute('data-go'));
+    if (el.hasAttribute('data-sel-start')) { state.selecting = true; state.selected = {}; return render(); }
+    if (el.hasAttribute('data-sel-all')) {
+      var vis = filtered(), allSel = vis.length > 0 && vis.every(function (d) { return state.selected[d.id]; });
+      state.selected = {}; if (!allSel) vis.forEach(function (d) { state.selected[d.id] = true; });
+      return render();
+    }
+    if (el.hasAttribute('data-sel-cancel')) { clearSelection(); return render(); }
+    if (el.hasAttribute('data-move-open')) { state.moveOpen = true; return render(); }
+    if (el.hasAttribute('data-move-to')) return moveSelected(el.getAttribute('data-move-to'));
+    if (el.hasAttribute('data-move-new')) { state.folderEdit = { mode: 'move', value: '', id: '' }; return render(); }
+    if (el.hasAttribute('data-move-cancel')) { state.moveOpen = false; if (state.folderEdit && state.folderEdit.mode === 'move') state.folderEdit = null; return render(); }
+    if (el.hasAttribute('data-stat-toggle')) return toggleStats();
+    if (el.hasAttribute('data-open') && state.selecting) return toggleSelect(el.getAttribute('data-open'));
     if (el.hasAttribute('data-open')) { state.detailId = el.getAttribute('data-open'); state.screen = 'detail'; state.armedDelete = false; state.armedSig = ''; render(); return window.scrollTo(0, 0); }
     if (el.hasAttribute('data-save')) return save();
     if (el.hasAttribute('data-edit')) {
@@ -790,7 +907,7 @@
     if (el.hasAttribute('data-print')) { document.body.classList.remove('print-all'); return window.print(); }
     if (el.hasAttribute('data-printall')) return printAll();
     if (el.hasAttribute('data-xlsx')) return exportXlsx();
-    if (el.hasAttribute('data-folder')) { state.folderFilter = el.getAttribute('data-folder'); state.armedFolderDel = false; state.folderEdit = null; state.msg = ''; return render(); }
+    if (el.hasAttribute('data-folder')) { state.folderFilter = el.getAttribute('data-folder'); state.armedFolderDel = false; state.folderEdit = null; state.selected = {}; state.msg = ''; return render(); }
     if (el.hasAttribute('data-folder-new')) { state.folderEdit = { mode: 'new', value: '', id: '' }; state.armedFolderDel = false; return render(); }
     if (el.hasAttribute('data-folder-rename')) { var rf = activeFolder(); if (rf) { state.folderEdit = { mode: 'rename', value: rf.name, id: rf.id }; } return render(); }
     if (el.hasAttribute('data-folder-save')) return saveFolder();
