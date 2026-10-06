@@ -133,6 +133,20 @@
   .hint { color: var(--muted); font-size: 14px; margin: 4px 0 8px; }
 
   .credit { margin: 28px 0 0; text-align: center; font-size: 13px; color: var(--muted); }
+  div.f { margin-bottom: 14px; }
+  .lbl { display: block; font-size: 14px; font-weight: 600; color: var(--muted); margin-bottom: 6px; }
+  select.in { -webkit-appearance: none; appearance: none; padding-right: 38px;
+    background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='14' height='9' viewBox='0 0 14 9'%3E%3Cpath d='M1 1l6 6 6-6' fill='none' stroke='%230b2830' stroke-width='2' stroke-linecap='round'/%3E%3C/svg%3E");
+    background-repeat: no-repeat; background-position: right 14px center; min-height: 50px; }
+  .chips { display: flex; flex-wrap: wrap; gap: 8px; margin: 0 0 14px; }
+  .chip { border: 1.5px solid var(--ink); background: transparent; color: var(--ink); padding: 9px 14px; border-radius: 999px;
+          font-weight: 600; font-size: 15px; cursor: pointer; }
+  .chip b { font-weight: 800; margin-left: 4px; color: var(--muted); font-variant-numeric: tabular-nums; }
+  .chip.on { background: var(--ink); color: #fff; }
+  .chip.on b { color: var(--line); }
+  .chip.add { border-style: dashed; border-color: var(--sea); color: var(--sea); }
+  .inline { border-left: 4px solid var(--sea); padding: 2px 0 2px 12px; margin: 0 0 16px; }
+  .tpl .sub b { color: var(--ink); }
   #printAll { display: none; }
   .pdoc h1 { font-size: 26px; }
   .pdoc .psum { margin: 6px 0 18px; color: var(--muted); font-size: 14px; }
@@ -161,10 +175,13 @@
 <script>
 (function () {
   var STORAGE_KEY = 'dyklogg.dives.v1';
+  var FOLDERS_KEY = 'dyklogg.folders.v1';
+  var TPL_KEY = 'dyklogg.templates.v1';
   var mem = {};
   var state = {
-    loading: true, dives: [], screen: 'home', detailId: null, editId: null,
-    form: null, error: '', armedDelete: false, armedSig: '', storageWarn: false, msg: ''
+    loading: true, dives: [], folders: [], templates: [], screen: 'home', detailId: null, editId: null,
+    form: null, error: '', armedDelete: false, armedSig: '', storageWarn: false, msg: '',
+    folderFilter: 'all', folderEdit: null, armedFolderDel: false, tplForm: null, tplEditId: null, armedTplDel: false, tplApplied: ''
   };
   var FIELDS = [
     ['task', 'Uppgift'], ['team', 'Arbetslag'], ['company', 'Bolag'],
@@ -204,6 +221,22 @@
   function sorted() {
     return state.dives.slice().sort(function (a, b) { return (b.date + (b.start || '')).localeCompare(a.date + (a.start || '')); });
   }
+  function findFolder(id) { return state.folders.filter(function (f) { return f.id === id; })[0]; }
+  function findTpl(id) { return state.templates.filter(function (t) { return t.id === id; })[0]; }
+  function folderName(id) { var f = id && findFolder(id); return f ? f.name : ''; }
+  function countIn(id) { return state.dives.filter(function (d) { return d.folder === id; }).length; }
+  function activeFolder() { return state.folderFilter !== 'all' ? findFolder(state.folderFilter) : null; }
+  function filtered() {
+    var fol = activeFolder();
+    return sorted().filter(function (d) { return !fol || d.folder === fol.id; });
+  }
+  function folderSelect(attr, value) {
+    if (!state.folders.length) return '';
+    var opts = '<option value="">Ingen mapp</option>' + state.folders.map(function (f) {
+      return '<option value="' + esc(f.id) + '"' + (f.id === value ? ' selected' : '') + '>' + esc(f.name) + '</option>';
+    }).join('');
+    return '<label class="f"><span>Mapp</span><select class="in" ' + attr + '>' + opts + '</select></label>';
+  }
   function findDive(id) { return state.dives.filter(function (d) { return d.id === id; })[0]; }
   function suggestions(key) {
     var seen = {}, out = [];
@@ -221,11 +254,18 @@
   function lsSet(k, v) { try { localStorage.setItem(k, v); return true; } catch (e) { mem[k] = v; return false; } }
   function load() {
     try { state.dives = JSON.parse(lsGet(STORAGE_KEY) || '[]') || []; } catch (e) { state.dives = []; }
+    try { state.folders = JSON.parse(lsGet(FOLDERS_KEY) || '[]') || []; } catch (e) { state.folders = []; }
+    try { state.templates = JSON.parse(lsGet(TPL_KEY) || '[]') || []; } catch (e) { state.templates = []; }
     state.loading = false;
     try { if (navigator.storage && navigator.storage.persist) navigator.storage.persist(); } catch (e) {}
     render();
   }
-  function persist() { state.storageWarn = !lsSet(STORAGE_KEY, JSON.stringify(state.dives)); }
+  function persist() {
+    var ok = lsSet(STORAGE_KEY, JSON.stringify(state.dives));
+    ok = lsSet(FOLDERS_KEY, JSON.stringify(state.folders)) && ok;
+    ok = lsSet(TPL_KEY, JSON.stringify(state.templates)) && ok;
+    state.storageWarn = !ok;
+  }
 
   /* ---------- signatur ---------- */
   function sigSvg(strokes) {
@@ -341,6 +381,11 @@
     var html = '<h2>' + (editing ? 'Ändra dyk' : 'Nytt dyk') + '</h2>';
     if (editing) { var od = findDive(state.editId); if (od && sigCount(od)) html += '<p class="note">Dyket är signerat. Om du ändrar något tas signaturerna bort och dyket måste signeras igen.</p>'; }
     if (state.error) html += '<p class="err" id="err" role="alert">' + esc(state.error) + '</p>';
+    if (!editing && state.templates.length) {
+      html += '<div class="f"><span class="lbl">Börja från mall</span><div class="chips">' + state.templates.map(function (t) {
+        return '<button class="chip' + (state.tplApplied === t.id ? ' on' : '') + '" data-tpl-use="' + esc(t.id) + '">' + esc(t.name) + '</button>';
+      }).join('') + '</div></div>';
+    }
     html += '<label class="f"><span>Datum</span><input class="in" type="date" data-k="date" value="' + esc(f.date) + '"></label>';
     html += '<div class="pair"><label class="f"><span>Starttid</span><input class="in" type="time" data-k="start" value="' + esc(f.start) + '"></label>' +
       '<label class="f"><span>Sluttid</span><input class="in" type="time" data-k="end" value="' + esc(f.end) + '"></label></div>';
@@ -351,6 +396,7 @@
       if (opts.length) html += '<datalist id="dl-' + key + '">' + opts.map(function (o) { return '<option value="' + esc(o) + '">'; }).join('') + '</datalist>';
       html += '</label>';
     });
+    html += folderSelect('data-k="folder"', f.folder);
     html += '<label class="f"><span>Anteckningar</span><textarea class="in" data-k="notes">' + esc(f.notes) + '</textarea></label>';
     html += '<button class="btn" data-save>' + (editing ? 'Spara ändringar' : 'Spara dyk') + '</button>';
     if (editing) html += '<div class="row"><button class="btn secondary" data-cancel-edit>Avbryt</button></div>';
@@ -358,15 +404,39 @@
   }
 
   function bookView() {
-    var list = sorted();
+    if (state.folderFilter !== 'all' && !findFolder(state.folderFilter)) state.folderFilter = 'all';
+    var all = sorted(), list = filtered(), fol = activeFolder();
     var html = '<h2>Dykbok</h2>';
     if (state.storageWarn) html += '<p class="note">Dykboken kan inte sparas permanent här. Spara en säkerhetskopia så att inget går förlorat.</p>';
     if (state.msg) html += '<p class="good" role="status">' + esc(state.msg) + '</p>';
-    if (!list.length) {
+
+    html += '<div class="chips" role="group" aria-label="Mappar"><button class="chip' + (!fol ? ' on' : '') + '" data-folder="all" aria-pressed="' + (!fol) + '">Alla <b>' + all.length + '</b></button>';
+    state.folders.forEach(function (f) {
+      var on = !!fol && fol.id === f.id;
+      html += '<button class="chip' + (on ? ' on' : '') + '" data-folder="' + esc(f.id) + '" aria-pressed="' + on + '">' + esc(f.name) + ' <b>' + countIn(f.id) + '</b></button>';
+    });
+    html += '<button class="chip add" data-folder-new>+ Ny mapp</button></div>';
+
+    if (state.folderEdit) {
+      var fe = state.folderEdit;
+      html += '<div class="inline">' + (fe.error ? '<p class="err">' + esc(fe.error) + '</p>' : '') +
+        '<label class="f"><span>' + (fe.mode === 'new' ? 'Namn på ny mapp' : 'Nytt namn på mappen') + '</span>' +
+        '<input class="in" type="text" data-fe maxlength="40" autocomplete="off" value="' + esc(fe.value) + '"></label>' +
+        '<div class="row"><button class="btn small" data-folder-save>Spara</button><button class="btn secondary small" data-folder-cancel>Avbryt</button></div></div>';
+    } else if (fol) {
+      html += '<div class="row" style="margin:0 0 14px"><button class="btn secondary small" data-folder-rename>Byt namn</button>' +
+        '<button class="btn danger small' + (state.armedFolderDel ? ' armed' : '') + '" data-folder-del>' +
+        (state.armedFolderDel ? 'Tryck igen (dyken blir kvar)' : 'Ta bort mappen') + '</button></div>';
+    }
+
+    if (!all.length) {
       html += '<div class="empty"><b>Du har inte loggat något dyk ännu</b>Tryck på Logga för att lägga till det första.</div>';
+    } else if (!list.length) {
+      html += '<div class="empty"><b>Mappen är tom</b>Välj mappen när du loggar ett dyk, eller flytta ett dyk via Ändra.</div>';
     } else {
       html += '<ul class="list">';
       list.forEach(function (d) {
+        var fn = !fol ? folderName(d.folder) : '';
         var sub = [d.location, d.task].filter(Boolean).join(' · ');
         var line2 = [(d.start && d.end) ? d.start + '–' + d.end : '', d.company].filter(Boolean).join(' · ');
         var sc = sigCount(d);
@@ -374,18 +444,49 @@
           : sc === 1 ? '<span class="sig-no">Signerad av ' + (d.sig.diver ? 'dykare' : 'dykledare') + ', saknar ' + (d.sig.diver ? 'dykledare' : 'dykare') + '</span>'
           : '<span class="sig-no">Ej signerad</span>';
         html += '<li><button data-open="' + esc(d.id) + '"><div class="top"><strong>' + esc(fmtDate(d.date)) + '</strong><span class="depth">' + fmtNum(num(d.depth)) + ' m</span></div>' +
+          (fn ? '<div class="sub">Mapp: ' + esc(fn) + '</div>' : '') +
           (sub ? '<div class="sub">' + esc(sub) + '</div>' : '') + (line2 ? '<div class="sub">' + esc(line2) + '</div>' : '') +
           '<div class="sub">' + sigLine + '</div></button></li>';
       });
       html += '</ul>';
     }
-    if (list.length) html += '<div class="spaced"><button class="btn" data-printall>Spara alla dyk som PDF</button>' +
-      '<div class="row"><button class="btn secondary" data-xlsx>Spara som Excel-fil</button></div></div>';
+    if (list.length) html += '<div class="spaced"><button class="btn" data-printall>' + (fol ? 'Spara mappen som PDF' : 'Spara alla dyk som PDF') + '</button>' +
+      '<div class="row"><button class="btn secondary" data-xlsx>' + (fol ? 'Spara mappen som Excel-fil' : 'Spara som Excel-fil') + '</button></div></div>';
+
+    html += '<h3>Mallar</h3><p class="hint">En mall fyller i uppgift, arbetslag, bolag, plats, hjälm och regulator åt dig när du loggar ett nytt dyk.</p>';
+    if (state.templates.length) {
+      html += '<ul class="list tpl">' + state.templates.map(function (t) {
+        var parts = [t.task, t.team, t.company, t.location, t.helmet, t.regulator].filter(Boolean).join(' · ');
+        var tf = folderName(t.folder);
+        return '<li><button data-tpl-edit="' + esc(t.id) + '"><div class="top"><strong>' + esc(t.name) + '</strong></div>' +
+          (parts ? '<div class="sub">' + esc(parts) + '</div>' : '') + (tf ? '<div class="sub">Mapp: ' + esc(tf) + '</div>' : '') + '</button></li>';
+      }).join('') + '</ul>';
+    }
+    html += '<div class="row"><button class="btn secondary" data-tpl-new>+ Ny mall</button></div>';
+
     html += '<h3>Säkerhetskopia</h3><p class="hint">Dykboken sparas i den här telefonen. Spara en kopia ibland, särskilt innan du byter telefon.</p>' +
       '<div class="row"><button class="btn secondary small" data-backup>Spara kopia</button>' +
       '<button class="btn secondary small" data-restore>Läs in kopia</button></div>' +
-      '<input type="file" id="restoreFile" accept=".json,application/json" hidden>' +
-      '';
+      '<input type="file" id="restoreFile" accept=".json,application/json" hidden>';
+    return html;
+  }
+
+  function templateView() {
+    var f = state.tplForm, editing = !!state.tplEditId;
+    var html = '<button class="back" data-go="book">‹ Dykbok</button><h2>' + (editing ? 'Ändra mall' : 'Ny mall') + '</h2>' +
+      '<p class="hint">Fyll i det som oftast är likadant. Fält du lämnar tomma fylls inte i.</p>';
+    if (state.error) html += '<p class="err" id="err" role="alert">' + esc(state.error) + '</p>';
+    html += '<label class="f"><span>Mallens namn</span><input class="in" type="text" data-t="name" maxlength="40" placeholder="t.ex. Hamnen, svetsning" value="' + esc(f.name) + '"></label>';
+    FIELDS.forEach(function (fd) {
+      var key = fd[0], opts = suggestions(key);
+      html += '<label class="f"><span>' + fd[1] + '</span><input class="in" type="text" data-t="' + key + '" list="dl-' + key + '" autocomplete="off" value="' + esc(f[key]) + '">';
+      if (opts.length) html += '<datalist id="dl-' + key + '">' + opts.map(function (o) { return '<option value="' + esc(o) + '">'; }).join('') + '</datalist>';
+      html += '</label>';
+    });
+    html += folderSelect('data-t="folder"', f.folder);
+    html += '<button class="btn" data-tpl-save>' + (editing ? 'Spara mallen' : 'Skapa mall') + '</button>';
+    if (editing) html += '<div class="row"><button class="btn danger' + (state.armedTplDel ? ' armed' : '') + '" data-tpl-del>' +
+      (state.armedTplDel ? 'Tryck igen för att ta bort mallen' : 'Ta bort mall') + '</button></div>';
     return html;
   }
 
@@ -413,7 +514,7 @@
     var rows = [
       ['Datum', fmtDate(d.date)], ['Tid', (d.start && d.end) ? d.start + '–' + d.end : ''], ['Bottentid', fmtDur(minutes(d))],
       ['Maxdjup', fmtNum(num(d.depth)) + ' m'], ['Uppgift', d.task], ['Arbetslag', d.team], ['Bolag', d.company],
-      ['Plats', d.location], ['Hjälm', d.helmet], ['Regulator', d.regulator], ['Anteckningar', d.notes]
+      ['Plats', d.location], ['Hjälm', d.helmet], ['Regulator', d.regulator], ['Mapp', folderName(d.folder)], ['Anteckningar', d.notes]
     ].filter(function (r) { return r[1]; });
     var html = '<button class="back" data-go="book">‹ Dykbok</button><h2>' + esc(fmtDate(d.date)) + '</h2><dl>';
     rows.forEach(function (r) { html += '<div><dt>' + r[0] + '</dt><dd>' + esc(r[1]) + '</dd></div>'; });
@@ -426,20 +527,22 @@
 
   function render() {
     if (state.loading) return;
-    var view = state.screen === 'home' ? homeView() : state.screen === 'log' ? formView() : state.screen === 'detail' ? detailView() : bookView();
+    var view = state.screen === 'home' ? homeView() : state.screen === 'log' ? formView() : state.screen === 'detail' ? detailView() : state.screen === 'template' ? templateView() : bookView();
     document.getElementById('app').innerHTML = view;
-    var current = state.screen === 'detail' ? 'book' : state.screen;
+    var current = (state.screen === 'detail' || state.screen === 'template') ? 'book' : state.screen;
     document.getElementById('nav').innerHTML = [['home', 'Hem'], ['log', 'Logga'], ['book', 'Dykbok']].map(function (i) {
       return '<button data-nav="' + i[0] + '"' + (current === i[0] ? ' aria-current="page"' : '') + '>' + ICONS[i[0]] + i[1] + '</button>';
     }).join('');
     var err = document.getElementById('err'); if (err) err.scrollIntoView({ block: 'center' });
+    if (state.folderEdit && document.querySelector) { var fe = document.querySelector('[data-fe]'); if (fe) fe.focus(); }
   }
 
   /* ---------- åtgärder ---------- */
-  function blankForm() { return { date: today(), start: '', end: '', depth: '', task: '', team: '', company: '', location: '', helmet: '', regulator: '', notes: '' }; }
+  function blankForm() { return { date: today(), start: '', end: '', depth: '', task: '', team: '', company: '', location: '', helmet: '', regulator: '', folder: '', notes: '' }; }
   function go(screen) {
     state.screen = screen; state.error = ''; state.armedDelete = false; state.armedSig = ''; state.msg = '';
-    if (screen === 'log') { state.editId = null; state.form = blankForm(); }
+    state.folderEdit = null; state.armedFolderDel = false; state.armedTplDel = false; state.tplApplied = '';
+    if (screen === 'log') { state.editId = null; state.form = blankForm(); var af = activeFolder(); if (af) state.form.folder = af.id; }
     render(); window.scrollTo(0, 0);
   }
   function save() {
@@ -450,7 +553,7 @@
     Object.keys(f).forEach(function (k) { clean[k] = typeof f[k] === 'string' ? f[k].trim() : f[k]; });
     if (state.editId) {
       var old = findDive(state.editId), changed = false;
-      Object.keys(clean).forEach(function (k) { if ((old[k] || '') !== clean[k]) changed = true; });
+      Object.keys(clean).forEach(function (k) { if (k !== 'folder' && (old[k] || '') !== clean[k]) changed = true; });
       Object.keys(clean).forEach(function (k) { old[k] = clean[k]; });
       if (changed) delete old.sig;
       state.detailId = state.editId; state.editId = null; state.screen = 'detail';
@@ -459,6 +562,45 @@
     }
     state.error = ''; state.form = null; persist(); render(); window.scrollTo(0, 0);
   }
+  function saveFolder() {
+    var fe = state.folderEdit, name = (fe.value || '').trim();
+    if (!name) { fe.error = 'Skriv ett namn.'; return render(); }
+    var dup = state.folders.some(function (f) { return f.name.toLowerCase() === name.toLowerCase() && f.id !== fe.id; });
+    if (dup) { fe.error = 'Det finns redan en mapp med det namnet.'; return render(); }
+    if (fe.mode === 'new') { var nf = { id: uid(), name: name }; state.folders.push(nf); state.folderFilter = nf.id; }
+    else { var f = findFolder(fe.id); if (f) f.name = name; }
+    state.folderEdit = null; persist(); render();
+  }
+  function deleteFolder(id) {
+    state.dives.forEach(function (d) { if (d.folder === id) d.folder = ''; });
+    state.templates.forEach(function (t) { if (t.folder === id) t.folder = ''; });
+    state.folders = state.folders.filter(function (f) { return f.id !== id; });
+    state.folderFilter = 'all'; state.armedFolderDel = false; persist(); render();
+  }
+  function openTemplate(id) {
+    var t = id && findTpl(id);
+    state.tplEditId = t ? t.id : null;
+    state.tplForm = t ? Object.assign({ name: '', task: '', team: '', company: '', location: '', helmet: '', regulator: '', folder: '' }, t)
+      : { name: '', task: '', team: '', company: '', location: '', helmet: '', regulator: '', folder: '' };
+    state.screen = 'template'; state.error = ''; state.armedTplDel = false; render(); window.scrollTo(0, 0);
+  }
+  function saveTemplate() {
+    var f = state.tplForm, name = (f.name || '').trim();
+    if (!name) { state.error = 'Ge mallen ett namn.'; return render(); }
+    var t = { id: state.tplEditId || uid(), name: name, folder: f.folder || '' };
+    FIELDS.forEach(function (fd) { t[fd[0]] = (f[fd[0]] || '').trim(); });
+    if (state.tplEditId) state.templates = state.templates.map(function (x) { return x.id === t.id ? t : x; });
+    else state.templates.push(t);
+    state.tplForm = null; state.tplEditId = null; state.error = ''; state.screen = 'book';
+    persist(); render(); window.scrollTo(0, 0);
+  }
+  function useTemplate(id) {
+    var t = findTpl(id); if (!t || !state.form) return;
+    FIELDS.forEach(function (fd) { state.form[fd[0]] = t[fd[0]] || ''; });
+    if (t.folder && findFolder(t.folder)) state.form.folder = t.folder;
+    state.tplApplied = id; render();
+  }
+
   /* ---------- Excel-fil (.xlsx), byggd utan bibliotek ---------- */
   var XLSX_MIME = 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet';
   function crc32(buf) {
@@ -503,13 +645,13 @@
     return '<c r="' + ref + '" t="inlineStr"' + st + '><is><t xml:space="preserve">' + xmlEsc(v) + '</t></is></c>';
   }
   function buildXlsx() {
-    var head = ['Datum', 'Start', 'Slut', 'Bottentid (min)', 'Maxdjup (m)', 'Uppgift', 'Arbetslag', 'Bolag', 'Plats', 'Hjälm', 'Regulator', 'Anteckningar', 'Dykare', 'Dykare signerad', 'Dykledare', 'Dykledare signerad'];
-    var widths = [12, 8, 8, 15, 12, 22, 18, 18, 18, 16, 16, 34, 18, 20, 18, 20];
+    var head = ['Datum', 'Start', 'Slut', 'Bottentid (min)', 'Maxdjup (m)', 'Uppgift', 'Arbetslag', 'Bolag', 'Plats', 'Hjälm', 'Regulator', 'Anteckningar', 'Dykare', 'Dykare signerad', 'Dykledare', 'Dykledare signerad', 'Mapp'];
+    var widths = [12, 8, 8, 15, 12, 22, 18, 18, 18, 16, 16, 34, 18, 20, 18, 20, 18];
     var rows = [head.map(function (h, i) { return xcell(i, 1, h, true); }).join('')];
-    sorted().reverse().forEach(function (d, idx) {
+    filtered().reverse().forEach(function (d, idx) {
       var r = idx + 2, sd = d.sig && d.sig.diver, sl = d.sig && d.sig.leader;
       var vals = [d.date, d.start, d.end, minutes(d) || '', num(d.depth), d.task, d.team, d.company, d.location, d.helmet, d.regulator, d.notes,
-        sd ? sd.name : '', sd ? fmtStamp(sd.at) : '', sl ? sl.name : '', sl ? fmtStamp(sl.at) : ''];
+        sd ? sd.name : '', sd ? fmtStamp(sd.at) : '', sl ? sl.name : '', sl ? fmtStamp(sl.at) : '', folderName(d.folder)];
       rows.push(vals.map(function (v, i) { return xcell(i, r, v, false); }).join(''));
     });
     var sheet = '<?xml version="1.0" encoding="UTF-8" standalone="yes"?><worksheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main">' +
@@ -533,7 +675,8 @@
     setTimeout(function () { URL.revokeObjectURL(a.href); }, 4000);
   }
   function exportXlsx() {
-    var blob = buildXlsx(), name = 'dyklogg-' + today() + '.xlsx', file = null;
+    var fol = activeFolder(), slug = fol ? '-' + fol.name.toLowerCase().replace(/[^a-z0-9åäö]+/g, '-').replace(/^-|-$/g, '') : '';
+    var blob = buildXlsx(), name = 'dyklogg-' + today() + slug + '.xlsx', file = null;
     try { file = new File([blob], name, { type: XLSX_MIME }); } catch (e) {}
     if (file && navigator.canShare && navigator.canShare({ files: [file] })) {
       navigator.share({ files: [file], title: 'DykLogg' }).then(function () {
@@ -547,10 +690,10 @@
     saveBlob(blob, name); state.msg = 'Excel-filen sparades i telefonens nedladdningar.'; render();
   }
   function printAll() {
-    var list = sorted().reverse();
+    var list = filtered().reverse(), fol = activeFolder();
     var mins = list.reduce(function (s, d) { return s + minutes(d); }, 0);
     var h = Math.floor(mins / 60), r = mins % 60;
-    var html = '<h1>DykLogg – dykbok</h1><p class="psum">' + list.length + ' dyk · medeldjup ' + fmtNum(avgDepth(list)) +
+    var html = '<h1>DykLogg – dykbok' + (fol ? ' – ' + esc(fol.name) : '') + '</h1><p class="psum">' + list.length + ' dyk · medeldjup ' + fmtNum(avgDepth(list)) +
       ' m · total tid ' + h + ' h ' + r + ' min · utskriven ' + esc(fmtDate(today())) + '<br>Gjord av David Erensjö · © 2026</p>';
     list.forEach(function (d) {
       var rows = [
@@ -573,7 +716,7 @@
     window.print();
   }
   function backup() {
-    var blob = new Blob([JSON.stringify({ app: 'DykLogg', version: 1, dives: state.dives })], { type: 'application/json' });
+    var blob = new Blob([JSON.stringify({ app: 'DykLogg', version: 2, dives: state.dives, folders: state.folders, templates: state.templates })], { type: 'application/json' });
     var a = document.createElement('a');
     a.href = URL.createObjectURL(blob); a.download = 'dyklogg-kopia-' + today() + '.json';
     document.body.appendChild(a); a.click(); document.body.removeChild(a);
@@ -586,9 +729,21 @@
       try {
         var data = JSON.parse(rd.result), incoming = Array.isArray(data) ? data : data.dives;
         if (!Array.isArray(incoming)) throw new Error('bad');
+        var fmap = {};
+        ((!Array.isArray(data) && data.folders) || []).forEach(function (f) {
+          if (!f || !f.id || !f.name) return;
+          var ex = state.folders.filter(function (x) { return x.id === f.id || x.name.toLowerCase() === String(f.name).toLowerCase(); })[0];
+          if (ex) fmap[f.id] = ex.id; else { state.folders.push({ id: f.id, name: String(f.name) }); fmap[f.id] = f.id; }
+        });
+        var haveT = {}; state.templates.forEach(function (t) { haveT[t.id] = 1; });
+        ((!Array.isArray(data) && data.templates) || []).forEach(function (t) {
+          if (t && t.id && t.name && !haveT[t.id]) { t.folder = t.folder ? (fmap[t.folder] || '') : ''; state.templates.push(t); }
+        });
         var have = {}; state.dives.forEach(function (d) { have[d.id] = 1; });
         var added = 0;
-        incoming.forEach(function (d) { if (d && d.id && d.date && !have[d.id]) { state.dives.push(d); added++; } });
+        incoming.forEach(function (d) {
+          if (d && d.id && d.date && !have[d.id]) { d.folder = d.folder ? (fmap[d.folder] || '') : ''; state.dives.push(d); added++; }
+        });
         persist(); state.msg = added + (added === 1 ? ' dyk lades' : ' dyk lades') + ' till från säkerhetskopian.';
       } catch (e) { state.msg = 'Filen gick inte att läsa. Välj en kopia som du sparat från DykLogg.'; }
       render();
@@ -597,15 +752,19 @@
   }
 
   /* ---------- händelser ---------- */
-  document.addEventListener('input', function (e) {
-    var k = e.target.getAttribute && e.target.getAttribute('data-k');
-    if (k && state.form) state.form[k] = e.target.value;
-  });
+  function syncField(t) {
+    if (!t || !t.getAttribute) return;
+    var k = t.getAttribute('data-k'); if (k && state.form) state.form[k] = t.value;
+    var tk = t.getAttribute('data-t'); if (tk && state.tplForm) state.tplForm[tk] = t.value;
+    if (t.getAttribute('data-fe') !== null && state.folderEdit) state.folderEdit.value = t.value;
+  }
+  document.addEventListener('input', function (e) { syncField(e.target); });
   document.addEventListener('change', function (e) {
+    syncField(e.target);
     if (e.target.id === 'restoreFile' && e.target.files[0]) restore(e.target.files[0]);
   });
   document.addEventListener('click', function (e) {
-    var el = e.target.closest('[data-nav],[data-go],[data-open],[data-save],[data-edit],[data-delete],[data-cancel-edit],[data-xlsx],[data-sign],[data-unsign],[data-print],[data-printall],[data-backup],[data-restore]');
+    var el = e.target.closest('[data-nav],[data-go],[data-open],[data-save],[data-edit],[data-delete],[data-cancel-edit],[data-xlsx],[data-folder],[data-folder-new],[data-folder-save],[data-folder-cancel],[data-folder-rename],[data-folder-del],[data-tpl-new],[data-tpl-edit],[data-tpl-save],[data-tpl-del],[data-tpl-use],[data-sign],[data-unsign],[data-print],[data-printall],[data-backup],[data-restore]');
     if (!el) return;
     if (el.hasAttribute('data-nav') || el.hasAttribute('data-go')) return go(el.getAttribute('data-nav') || el.getAttribute('data-go'));
     if (el.hasAttribute('data-open')) { state.detailId = el.getAttribute('data-open'); state.screen = 'detail'; state.armedDelete = false; state.armedSig = ''; render(); return window.scrollTo(0, 0); }
@@ -631,6 +790,25 @@
     if (el.hasAttribute('data-print')) { document.body.classList.remove('print-all'); return window.print(); }
     if (el.hasAttribute('data-printall')) return printAll();
     if (el.hasAttribute('data-xlsx')) return exportXlsx();
+    if (el.hasAttribute('data-folder')) { state.folderFilter = el.getAttribute('data-folder'); state.armedFolderDel = false; state.folderEdit = null; state.msg = ''; return render(); }
+    if (el.hasAttribute('data-folder-new')) { state.folderEdit = { mode: 'new', value: '', id: '' }; state.armedFolderDel = false; return render(); }
+    if (el.hasAttribute('data-folder-rename')) { var rf = activeFolder(); if (rf) { state.folderEdit = { mode: 'rename', value: rf.name, id: rf.id }; } return render(); }
+    if (el.hasAttribute('data-folder-save')) return saveFolder();
+    if (el.hasAttribute('data-folder-cancel')) { state.folderEdit = null; return render(); }
+    if (el.hasAttribute('data-folder-del')) {
+      var df = activeFolder(); if (!df) return;
+      if (!state.armedFolderDel) { state.armedFolderDel = true; return render(); }
+      return deleteFolder(df.id);
+    }
+    if (el.hasAttribute('data-tpl-new')) return openTemplate('');
+    if (el.hasAttribute('data-tpl-edit')) return openTemplate(el.getAttribute('data-tpl-edit'));
+    if (el.hasAttribute('data-tpl-save')) return saveTemplate();
+    if (el.hasAttribute('data-tpl-del')) {
+      if (!state.armedTplDel) { state.armedTplDel = true; return render(); }
+      state.templates = state.templates.filter(function (t) { return t.id !== state.tplEditId; });
+      state.tplForm = null; state.tplEditId = null; state.armedTplDel = false; state.screen = 'book'; persist(); render(); return window.scrollTo(0, 0);
+    }
+    if (el.hasAttribute('data-tpl-use')) return useTemplate(el.getAttribute('data-tpl-use'));
     if (el.hasAttribute('data-backup')) return backup();
     if (el.hasAttribute('data-restore')) { var fi = document.getElementById('restoreFile'); if (fi) fi.click(); return; }
   });
