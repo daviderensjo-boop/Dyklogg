@@ -116,7 +116,7 @@
                  padding: 10px; border: 1.5px solid var(--line); border-radius: 10px; background: var(--white); }
 
   nav { position: fixed; left: 0; right: 0; bottom: 0; background: var(--ink); z-index: 10; padding-bottom: env(safe-area-inset-bottom); }
-  nav .inner { max-width: 520px; margin: 0 auto; display: grid; grid-template-columns: repeat(3, 1fr); }
+  nav .inner { max-width: 520px; margin: 0 auto; display: grid; grid-template-columns: repeat(4, 1fr); }
   nav button { background: none; border: 0; color: #9fb9bd; padding: 10px 0 9px; font-size: 13px; font-weight: 600;
                display: flex; flex-direction: column; align-items: center; gap: 3px; cursor: pointer; }
   nav button svg { width: 24px; height: 24px; stroke: currentColor; fill: none; stroke-width: 2; stroke-linecap: round; stroke-linejoin: round; }
@@ -167,6 +167,21 @@
   .panel { position: fixed; left: 0; right: 0; bottom: 0; z-index: 41; background: var(--bg); max-height: 80%; overflow-y: auto;
            padding: 18px 20px calc(18px + env(safe-area-inset-bottom)); border-radius: 16px 16px 0 0; }
   .panel > div { max-width: 520px; margin: 0 auto; }
+  .warn { color: #8a5a00; font-weight: 600; }
+  .docimg { display: block; width: 100%; height: auto; border: 1.5px solid var(--line); border-radius: 10px; background: #fff; cursor: zoom-in; }
+  .docfile { margin: 0 0 20px; }
+  .docfile .row { margin-top: 8px; }
+  .frow { display: flex; align-items: center; gap: 12px; padding: 9px 0; border-bottom: 1px solid var(--line); }
+  .frow .nm { flex: 1; min-width: 0; overflow-wrap: anywhere; font-size: 15px; }
+  .frow .nm small { display: block; color: var(--muted); }
+  .frow .thumb { width: 48px; height: 48px; object-fit: cover; border-radius: 6px; border: 1px solid var(--line); flex: none; }
+  .frow .ico { width: 48px; height: 48px; flex: none; border-radius: 6px; background: var(--sea-soft); color: var(--sea);
+               display: flex; align-items: center; justify-content: center; font-weight: 800; font-size: 13px; }
+  .frow button { background: none; border: 0; color: var(--flag-dark); font-weight: 700; cursor: pointer; padding: 8px 0 8px 8px; font-size: 15px; }
+  .viewer { position: fixed; inset: 0; z-index: 60; background: #000; overflow: auto; touch-action: pan-x pan-y pinch-zoom; }
+  .viewer img { display: block; width: 100%; height: auto; }
+  .viewer .vclose { position: fixed; top: calc(12px + env(safe-area-inset-top)); right: 14px; z-index: 61; background: rgba(0,0,0,.65); color: #fff;
+                    border: 1.5px solid #fff; border-radius: 999px; padding: 10px 18px; font-weight: 700; cursor: pointer; }
   #printAll { display: none; }
   .pdoc h1 { font-size: 26px; }
   .pdoc .psum { margin: 6px 0 18px; color: var(--muted); font-size: 14px; }
@@ -195,6 +210,9 @@
 <script>
 (function () {
   var STORAGE_KEY = 'dyklogg.dives.v1';
+  var DOCS_KEY = 'dyklogg.docs.v1';
+  var DOCCATS = ['Certifikat', 'Läkarundersökning', 'HLR / första hjälpen', 'Heta arbeten', 'Övrigt'];
+  var MAX_PDF = 15 * 1024 * 1024;
   var FOLDERS_KEY = 'dyklogg.folders.v1';
   var TPL_KEY = 'dyklogg.templates.v1';
   var mem = {};
@@ -202,7 +220,9 @@
     loading: true, dives: [], folders: [], templates: [], screen: 'home', detailId: null, editId: null,
     form: null, error: '', armedDelete: false, armedSig: '', storageWarn: false, msg: '',
     folderFilter: 'all', folderEdit: null, armedFolderDel: false, tplForm: null, tplEditId: null, armedTplDel: false, tplApplied: '',
-    selecting: false, selected: {}, moveOpen: false
+    selecting: false, selected: {}, moveOpen: false,
+    docs: [], docsOk: true, docId: null, docForm: null, docEditId: null, docPending: [], docRemoved: [], docBusy: false,
+    docUrls: {}, docLoading: false, armedDocDel: false, viewerUrl: ''
   };
   var pressTimer = null, pressFired = false, pressStart = null;
   var FIELDS = [
@@ -242,6 +262,169 @@
   function fmtDur(m) { if (!m) return ''; var h = Math.floor(m / 60), r = m % 60; return h ? h + ' h ' + (r ? r + ' min' : '') : r + ' min'; }
   function sorted() {
     return state.dives.slice().sort(function (a, b) { return (b.date + (b.start || '')).localeCompare(a.date + (a.start || '')); });
+  }
+  /* ---------- dokument: filerna ligger i IndexedDB, uppgifterna i localStorage ---------- */
+  var DB = null;
+  function idb() {
+    return new Promise(function (res, rej) {
+      if (DB) return res(DB);
+      var rq;
+      try { rq = indexedDB.open('dyklogg-files', 1); } catch (e) { state.docsOk = false; return rej(e); }
+      rq.onupgradeneeded = function () { rq.result.createObjectStore('files', { keyPath: 'id' }); };
+      rq.onsuccess = function () { DB = rq.result; res(DB); };
+      rq.onerror = function () { state.docsOk = false; rej(rq.error); };
+    });
+  }
+  function idbPut(rec) {
+    return idb().then(function (db) {
+      return new Promise(function (res, rej) {
+        var tx = db.transaction('files', 'readwrite'); tx.objectStore('files').put(rec);
+        tx.oncomplete = function () { res(); }; tx.onerror = tx.onabort = function () { rej(tx.error); };
+      });
+    });
+  }
+  function idbGet(id) {
+    return idb().then(function (db) {
+      return new Promise(function (res, rej) {
+        var rq = db.transaction('files', 'readonly').objectStore('files').get(id);
+        rq.onsuccess = function () { res(rq.result); }; rq.onerror = function () { rej(rq.error); };
+      });
+    });
+  }
+  function idbDel(id) {
+    return idb().then(function (db) {
+      return new Promise(function (res, rej) {
+        var tx = db.transaction('files', 'readwrite'); tx.objectStore('files').delete(id);
+        tx.oncomplete = function () { res(); }; tx.onerror = tx.onabort = function () { rej(tx.error); };
+      });
+    });
+  }
+  function findDoc(id) { return state.docs.filter(function (d) { return d.id === id; })[0]; }
+  function fmtSize(b) { return b >= 1048576 ? (b / 1048576).toFixed(1).replace('.', ',') + ' MB' : Math.max(1, Math.round(b / 1024)) + ' kB'; }
+  function docCat(d) { return DOCCATS.indexOf(d.cat) >= 0 ? d.cat : 'Övrigt'; }
+  function expiryInfo(d) {
+    if (!d.expires) return null;
+    var days = Math.round((new Date(d.expires + 'T12:00:00') - new Date(today() + 'T12:00:00')) / 86400000);
+    if (isNaN(days)) return null;
+    if (days < 0) return { cls: 'sig-no', text: 'Utgånget ' + fmtDate(d.expires), state: 'expired' };
+    if (days === 0) return { cls: 'warn', text: 'Går ut idag', state: 'soon' };
+    if (days <= 60) return { cls: 'warn', text: 'Går ut om ' + days + (days === 1 ? ' dag' : ' dagar') + ' (' + fmtDate(d.expires) + ')', state: 'soon' };
+    return { cls: '', text: 'Giltigt till ' + fmtDate(d.expires), state: 'ok' };
+  }
+  function prepareFile(file) {
+    return new Promise(function (resolve, reject) {
+      var isPdf = file.type === 'application/pdf' || /[.]pdf$/i.test(file.name || '');
+      if (isPdf) {
+        if (file.size > MAX_PDF) return reject(new Error('PDF-filen är för stor (högst 15 MB).'));
+        return file.arrayBuffer().then(function (b) { resolve({ name: file.name || 'dokument.pdf', type: 'application/pdf', size: file.size, data: b }); }, reject);
+      }
+      if (!/^image\//.test(file.type || '')) return reject(new Error('Bara foton och PDF-filer går att spara.'));
+      var url = URL.createObjectURL(file), img = new Image();
+      img.onload = function () {
+        var max = 1800, w = img.naturalWidth || img.width, h = img.naturalHeight || img.height, sc = Math.min(1, max / Math.max(w, h));
+        var cv = document.createElement('canvas'); cv.width = Math.round(w * sc); cv.height = Math.round(h * sc);
+        var cx = cv.getContext('2d'); cx.fillStyle = '#fff'; cx.fillRect(0, 0, cv.width, cv.height); cx.drawImage(img, 0, 0, cv.width, cv.height);
+        URL.revokeObjectURL(url);
+        cv.toBlob(function (blob) {
+          if (!blob) return reject(new Error('Kunde inte läsa bilden.'));
+          blob.arrayBuffer().then(function (b) {
+            resolve({ name: (file.name || 'foto').replace(/[.][^.]+$/, '') + '.jpg', type: 'image/jpeg', size: blob.size, data: b });
+          }, reject);
+        }, 'image/jpeg', 0.85);
+      };
+      img.onerror = function () {
+        URL.revokeObjectURL(url);
+        if (file.size <= 10 * 1048576) file.arrayBuffer().then(function (b) { resolve({ name: file.name || 'foto', type: file.type, size: file.size, data: b }); }, reject);
+        else reject(new Error('Kunde inte läsa bilden.'));
+      };
+      img.src = url;
+    });
+  }
+  function revokeDocUrls() {
+    Object.keys(state.docUrls).forEach(function (k) { try { URL.revokeObjectURL(state.docUrls[k]); } catch (e) {} });
+    state.docUrls = {};
+  }
+  function clearPending() {
+    state.docPending.forEach(function (r) { if (r.thumb) { try { URL.revokeObjectURL(r.thumb); } catch (e) {} } });
+    state.docPending = []; state.docRemoved = [];
+  }
+  function addPicked(fileList) {
+    var files = Array.prototype.slice.call(fileList || []); if (!files.length) return;
+    state.docBusy = true; state.error = ''; render();
+    files.reduce(function (p, f) {
+      return p.then(function () {
+        return prepareFile(f).then(function (rec) {
+          rec.id = uid();
+          rec.thumb = /^image\//.test(rec.type) ? URL.createObjectURL(new Blob([rec.data], { type: rec.type })) : '';
+          state.docPending.push(rec);
+        }).catch(function (e) { state.error = (e && e.message) || 'Kunde inte läsa filen.'; });
+      });
+    }, Promise.resolve()).then(function () { state.docBusy = false; render(); });
+  }
+  function openDocForm(id) {
+    var d = id && findDoc(id);
+    clearPending();
+    state.docEditId = d ? d.id : null;
+    state.docForm = d ? { title: d.title, cat: docCat(d), expires: d.expires || '', note: d.note || '' } : { title: '', cat: DOCCATS[0], expires: '', note: '' };
+    state.screen = 'docform'; state.error = ''; render(); window.scrollTo(0, 0);
+  }
+  function saveDoc() {
+    if (state.docBusy) return;
+    var f = state.docForm, title = (f.title || '').trim(), editing = state.docEditId ? findDoc(state.docEditId) : null;
+    if (!title) { state.error = 'Ge dokumentet ett namn.'; return render(); }
+    var kept = editing ? editing.files.filter(function (x) { return state.docRemoved.indexOf(x.id) < 0; }) : [];
+    if (!kept.length && !state.docPending.length) { state.error = 'Lägg till minst ett foto eller en PDF.'; return render(); }
+    state.docBusy = true; state.error = ''; render();
+    var pending = state.docPending.slice(), removed = state.docRemoved.slice();
+    Promise.all(pending.map(function (r) { return idbPut({ id: r.id, name: r.name, type: r.type, data: r.data }); }))
+      .then(function () { return Promise.all(removed.map(idbDel)); })
+      .then(function () {
+        var doc = editing || { id: uid(), added: new Date().toISOString(), files: [] };
+        doc.title = title; doc.cat = f.cat; doc.expires = f.expires || ''; doc.note = (f.note || '').trim();
+        doc.files = kept.concat(pending.map(function (r) { return { id: r.id, name: r.name, type: r.type, size: r.size }; }));
+        if (!editing) state.docs.push(doc);
+        clearPending(); persist(); state.docBusy = false; state.docForm = null; state.docEditId = null;
+        openDoc(doc.id);
+      })
+      .catch(function () { state.docBusy = false; state.error = 'Kunde inte spara filerna. Lagringen i telefonen kan vara full.'; render(); });
+  }
+  function openDoc(id) {
+    revokeDocUrls();
+    state.docId = id; state.screen = 'docdetail'; state.armedDocDel = false; state.viewerUrl = ''; state.docLoading = true; state.error = '';
+    render(); window.scrollTo(0, 0);
+    var d = findDoc(id); if (!d) { state.docLoading = false; return; }
+    Promise.all(d.files.map(function (f) {
+      return idbGet(f.id).then(function (rec) { if (rec) state.docUrls[f.id] = URL.createObjectURL(new Blob([rec.data], { type: f.type })); });
+    })).then(function () { state.docLoading = false; if (state.screen === 'docdetail' && state.docId === id) render(); })
+      .catch(function () { state.docLoading = false; state.error = 'Kunde inte läsa filerna.'; if (state.screen === 'docdetail') render(); });
+  }
+  function deleteDoc(id) {
+    var d = findDoc(id); if (!d) return;
+    Promise.all(d.files.map(function (f) { return idbDel(f.id).catch(function () {}); })).then(function () {
+      state.docs = state.docs.filter(function (x) { return x.id !== id; });
+      revokeDocUrls(); state.docId = null; state.armedDocDel = false; state.screen = 'docs'; state.msg = 'Dokumentet togs bort.';
+      persist(); render(); window.scrollTo(0, 0);
+    });
+  }
+  function shareFile(fid) {
+    var d = findDoc(state.docId), meta = d && d.files.filter(function (x) { return x.id === fid; })[0];
+    if (!meta) return;
+    idbGet(fid).then(function (rec) {
+      if (!rec) return;
+      var blob = new Blob([rec.data], { type: meta.type }), file = null;
+      try { file = new File([blob], meta.name, { type: meta.type }); } catch (e) {}
+      if (file && navigator.canShare && navigator.canShare({ files: [file] })) {
+        navigator.share({ files: [file], title: meta.name }).catch(function (e) { if (!e || e.name !== 'AbortError') saveBlob(blob, meta.name); });
+      } else saveBlob(blob, meta.name);
+    });
+  }
+  function docAlerts() {
+    var out = { expired: 0, soon: 0 };
+    state.docs.forEach(function (d) { var i = expiryInfo(d); if (i && i.state === 'expired') out.expired++; else if (i && i.state === 'soon') out.soon++; });
+    return out;
+  }
+  function bufToDataUrl(buf, type) {
+    return new Promise(function (res, rej) { var r = new FileReader(); r.onload = function () { res(r.result); }; r.onerror = rej; r.readAsDataURL(new Blob([buf], { type: type })); });
   }
   function selIds() { return Object.keys(state.selected).filter(function (id) { return state.selected[id]; }); }
   function clearSelection() {
@@ -305,6 +488,8 @@
     try { state.dives = JSON.parse(lsGet(STORAGE_KEY) || '[]') || []; } catch (e) { state.dives = []; }
     try { state.folders = JSON.parse(lsGet(FOLDERS_KEY) || '[]') || []; } catch (e) { state.folders = []; }
     try { state.templates = JSON.parse(lsGet(TPL_KEY) || '[]') || []; } catch (e) { state.templates = []; }
+    try { state.docs = JSON.parse(lsGet(DOCS_KEY) || '[]') || []; } catch (e) { state.docs = []; }
+    state.docsOk = typeof indexedDB !== 'undefined' && !!indexedDB;
     state.loading = false;
     try { if (navigator.storage && navigator.storage.persist) navigator.storage.persist(); } catch (e) {}
     render();
@@ -313,6 +498,7 @@
     var ok = lsSet(STORAGE_KEY, JSON.stringify(state.dives));
     ok = lsSet(FOLDERS_KEY, JSON.stringify(state.folders)) && ok;
     ok = lsSet(TPL_KEY, JSON.stringify(state.templates)) && ok;
+    ok = lsSet(DOCS_KEY, JSON.stringify(state.docs)) && ok;
     state.storageWarn = !ok;
   }
 
@@ -389,7 +575,8 @@
   var ICONS = {
     home: '<svg viewBox="0 0 24 24"><path d="M3 11l9-8 9 8"/><path d="M5 10v10h5v-6h4v6h5V10"/></svg>',
     log: '<svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"/><path d="M12 8v8M8 12h8"/></svg>',
-    book: '<svg viewBox="0 0 24 24"><path d="M4 5a2 2 0 0 1 2-2h13v17H6a2 2 0 0 0-2 2z"/><path d="M4 5v16"/><path d="M9 8h6"/></svg>'
+    book: '<svg viewBox="0 0 24 24"><path d="M4 5a2 2 0 0 1 2-2h13v17H6a2 2 0 0 0-2 2z"/><path d="M4 5v16"/><path d="M9 8h6"/></svg>',
+    docs: '<svg viewBox="0 0 24 24"><path d="M6 3h8l5 5v13H6z"/><path d="M14 3v5h5"/><path d="M9 13h7M9 17h7"/></svg>'
   };
 
   function homeView() {
@@ -406,6 +593,9 @@
     if (total && counted.length !== total) html += '<p class="hint">Statistiken räknar ' + counted.length + ' av ' + total + ' dyk. Du ändrar det i Dykbok genom att markera dyk.</p>';
     var unsigned = list.filter(function (d) { return !(d.sig && d.sig.leader); }).length;
     if (total && unsigned) html += '<p class="note">' + unsigned + (unsigned === 1 ? ' dyk saknar' : ' dyk saknar') + ' dykledarens signatur.</p>';
+    var dal = docAlerts();
+    if (dal.expired || dal.soon) html += '<p class="note">Dokument: ' + (dal.expired ? dal.expired + ' har gått ut' : '') + (dal.expired && dal.soon ? ', ' : '') +
+      (dal.soon ? dal.soon + ' går ut inom 60 dagar' : '') + '. <button class="back" style="display:inline;padding:0 0 0 4px" data-go="docs">Visa</button></p>';
     if (state.storageWarn) html += '<p class="note">Dykboken kan inte sparas permanent här. Öppna appen från hemskärmen eller i Chrome.</p>';
     if (!total) {
       html += '<div class="empty"><b>Inga dyk ännu</b>Logga ditt första dyk för att börja fylla dykboken.</div>';
@@ -553,6 +743,80 @@
     return html;
   }
 
+  function docStatusLine(d) {
+    var i = expiryInfo(d);
+    return i ? '<div class="sub ' + i.cls + '">' + esc(i.text) + '</div>' : '';
+  }
+  function docsView() {
+    var html = '<h2>Dokument</h2><p class="hint">Samla foton och PDF:er av certifikat, läkarundersökningar, HLR, heta arbeten med mera. De sparas bara i den här telefonen och skickas aldrig någonstans.</p>';
+    if (!state.docsOk) html += '<p class="note">Den här webbläsaren kan inte spara dokument. Öppna appen från hemskärmen eller i Chrome eller Safari.</p>';
+    if (state.msg) html += '<p class="good" role="status">' + esc(state.msg) + '</p>';
+    var al = docAlerts();
+    if (al.expired || al.soon) html += '<p class="note">' + (al.expired ? al.expired + (al.expired === 1 ? ' dokument har gått ut. ' : ' dokument har gått ut. ') : '') +
+      (al.soon ? al.soon + (al.soon === 1 ? ' dokument går ut inom 60 dagar.' : ' dokument går ut inom 60 dagar.') : '') + '</p>';
+    html += '<button class="btn" data-doc-new' + (state.docsOk ? '' : ' disabled') + '>+ Lägg till dokument</button>';
+    if (!state.docs.length) {
+      html += '<div class="empty"><b>Inga dokument ännu</b>Fota ditt certifikat eller välj en PDF, så finns det samlat med dina dyk.</div>';
+    } else {
+      DOCCATS.forEach(function (cat) {
+        var items = state.docs.filter(function (d) { return docCat(d) === cat; }).sort(function (a, b) { return a.title.localeCompare(b.title, 'sv'); });
+        if (!items.length) return;
+        html += '<h3>' + esc(cat) + '</h3><ul class="list">' + items.map(function (d) {
+          return '<li><button data-doc-view="' + esc(d.id) + '"><div class="top"><strong>' + esc(d.title) + '</strong><span class="sub">' + d.files.length + (d.files.length === 1 ? ' fil' : ' filer') + '</span></div>' + docStatusLine(d) + '</button></li>';
+        }).join('') + '</ul>';
+      });
+    }
+    return html;
+  }
+  function docDetailView() {
+    var d = findDoc(state.docId);
+    if (!d) return docsView();
+    var html = '<button class="back" data-go="docs">‹ Dokument</button><h2>' + esc(d.title) + '</h2>';
+    if (state.error) html += '<p class="err" role="alert">' + esc(state.error) + '</p>';
+    var info = expiryInfo(d);
+    var rows = [['Kategori', docCat(d)], ['Giltighet', info ? info.text : ''], ['Anteckning', d.note], ['Tillagd', d.added ? fmtDate(d.added.slice(0, 10)) : '']].filter(function (r) { return r[1]; });
+    html += '<dl>' + rows.map(function (r) { return '<div><dt>' + r[0] + '</dt><dd>' + esc(r[1]) + '</dd></div>'; }).join('') + '</dl><h3>Filer</h3>';
+    if (state.docLoading) html += '<p class="hint">Laddar filer …</p>';
+    else d.files.forEach(function (f) {
+      var url = state.docUrls[f.id];
+      if (!url) { html += '<div class="docfile"><p class="note">Filen ' + esc(f.name) + ' hittades inte.</p></div>'; return; }
+      if (/^image\//.test(f.type)) {
+        html += '<div class="docfile"><img class="docimg" alt="' + esc(f.name) + '" src="' + esc(url) + '" data-doc-img="' + esc(url) + '">' +
+          '<div class="row"><button class="btn secondary small" data-doc-share="' + esc(f.id) + '">Dela / spara</button></div></div>';
+      } else {
+        html += '<div class="docfile"><div class="frow"><span class="ico">PDF</span><span class="nm">' + esc(f.name) + '<small>' + fmtSize(f.size) + '</small></span></div>' +
+          '<div class="row"><button class="btn small" data-doc-pdf="' + esc(f.id) + '">Öppna PDF</button>' +
+          '<button class="btn secondary small" data-doc-share="' + esc(f.id) + '">Dela / spara</button></div></div>';
+      }
+    });
+    html += '<div class="row spaced"><button class="btn secondary" data-doc-edit>Ändra</button>' +
+      '<button class="btn danger' + (state.armedDocDel ? ' armed' : '') + '" data-doc-del>' + (state.armedDocDel ? 'Tryck igen för att ta bort' : 'Ta bort') + '</button></div>';
+    if (state.viewerUrl) html += '<div class="viewer"><button class="vclose" data-viewer-close>Stäng</button><img alt="" src="' + esc(state.viewerUrl) + '"></div>';
+    return html;
+  }
+  function docFormView() {
+    var f = state.docForm, editing = state.docEditId ? findDoc(state.docEditId) : null;
+    var html = '<button class="back" data-doc-cancel>‹ Avbryt</button><h2>' + (editing ? 'Ändra dokument' : 'Nytt dokument') + '</h2>';
+    if (state.error) html += '<p class="err" id="err" role="alert">' + esc(state.error) + '</p>';
+    html += '<label class="f"><span>Namn</span><input class="in" type="text" data-d="title" maxlength="60" placeholder="t.ex. Dykcertifikat, Läkarundersökning" value="' + esc(f.title) + '"></label>' +
+      '<label class="f"><span>Kategori</span><select class="in" data-d="cat">' + DOCCATS.map(function (c) { return '<option' + (c === f.cat ? ' selected' : '') + '>' + esc(c) + '</option>'; }).join('') + '</select></label>' +
+      '<label class="f"><span>Giltigt till (valfritt)</span><input class="in" type="date" data-d="expires" value="' + esc(f.expires) + '"></label>' +
+      '<label class="f"><span>Anteckning (valfritt)</span><textarea class="in" style="min-height:70px" data-d="note">' + esc(f.note) + '</textarea></label>';
+    html += '<div class="f"><span class="lbl">Foton och PDF</span>';
+    if (editing) editing.files.filter(function (x) { return state.docRemoved.indexOf(x.id) < 0; }).forEach(function (x) {
+      html += '<div class="frow"><span class="ico">' + (/^image\//.test(x.type) ? 'FOTO' : 'PDF') + '</span><span class="nm">' + esc(x.name) + '<small>' + fmtSize(x.size) + '</small></span><button data-doc-rm-file="' + esc(x.id) + '">Ta bort</button></div>';
+    });
+    state.docPending.forEach(function (r) {
+      html += '<div class="frow">' + (r.thumb ? '<img class="thumb" alt="" src="' + esc(r.thumb) + '">' : '<span class="ico">PDF</span>') +
+        '<span class="nm">' + esc(r.name) + '<small>' + fmtSize(r.size) + '</small></span><button data-doc-rm-pending="' + esc(r.id) + '">Ta bort</button></div>';
+    });
+    if (state.docBusy) html += '<p class="hint">Bearbetar …</p>';
+    html += '<div class="row"><button class="btn secondary" data-doc-pick' + (state.docBusy ? ' disabled' : '') + '>Ta foto eller välj fil</button></div>' +
+      '<input type="file" id="docFile" accept="image/*,application/pdf" multiple hidden></div>';
+    html += '<button class="btn" data-doc-save' + (state.docBusy ? ' disabled' : '') + '>' + (editing ? 'Spara ändringar' : 'Spara dokument') + '</button>';
+    return html;
+  }
+
   function templateView() {
     var f = state.tplForm, editing = !!state.tplEditId;
     var html = '<button class="back" data-go="book">‹ Dykbok</button><h2>' + (editing ? 'Ändra mall' : 'Ny mall') + '</h2>' +
@@ -609,10 +873,10 @@
 
   function render() {
     if (state.loading) return;
-    var view = state.screen === 'home' ? homeView() : state.screen === 'log' ? formView() : state.screen === 'detail' ? detailView() : state.screen === 'template' ? templateView() : bookView();
+    var view = state.screen === 'home' ? homeView() : state.screen === 'log' ? formView() : state.screen === 'detail' ? detailView() : state.screen === 'template' ? templateView() : state.screen === 'docs' ? docsView() : state.screen === 'docdetail' ? docDetailView() : state.screen === 'docform' ? docFormView() : bookView();
     document.getElementById('app').innerHTML = view;
-    var current = (state.screen === 'detail' || state.screen === 'template') ? 'book' : state.screen;
-    document.getElementById('nav').innerHTML = [['home', 'Hem'], ['log', 'Logga'], ['book', 'Dykbok']].map(function (i) {
+    var current = (state.screen === 'detail' || state.screen === 'template') ? 'book' : (state.screen === 'docdetail' || state.screen === 'docform') ? 'docs' : state.screen;
+    document.getElementById('nav').innerHTML = [['home', 'Hem'], ['log', 'Logga'], ['book', 'Dykbok'], ['docs', 'Dokument']].map(function (i) {
       return '<button data-nav="' + i[0] + '"' + (current === i[0] ? ' aria-current="page"' : '') + '>' + ICONS[i[0]] + i[1] + '</button>';
     }).join('');
     var err = document.getElementById('err'); if (err) err.scrollIntoView({ block: 'center' });
@@ -624,7 +888,7 @@
   function go(screen) {
     state.screen = screen; state.error = ''; state.armedDelete = false; state.armedSig = ''; state.msg = '';
     state.folderEdit = null; state.armedFolderDel = false; state.armedTplDel = false; state.tplApplied = '';
-    clearSelection();
+    clearSelection(); revokeDocUrls(); clearPending(); state.viewerUrl = ''; state.armedDocDel = false;
     if (screen === 'log') { state.editId = null; state.form = blankForm(); var af = activeFolder(); if (af) state.form.folder = af.id; }
     render(); window.scrollTo(0, 0);
   }
@@ -800,37 +1064,61 @@
     window.print();
   }
   function backup() {
-    var blob = new Blob([JSON.stringify({ app: 'DykLogg', version: 2, dives: state.dives, folders: state.folders, templates: state.templates })], { type: 'application/json' });
-    var a = document.createElement('a');
-    a.href = URL.createObjectURL(blob); a.download = 'dyklogg-kopia-' + today() + '.json';
-    document.body.appendChild(a); a.click(); document.body.removeChild(a);
-    setTimeout(function () { URL.revokeObjectURL(a.href); }, 4000);
-    state.msg = 'Säkerhetskopian sparades som fil i telefonens nedladdningar.'; render();
+    var pack = { app: 'DykLogg', version: 3, dives: state.dives, folders: state.folders, templates: state.templates, docs: state.docs, docFiles: {} };
+    function finish() {
+      var blob = new Blob([JSON.stringify(pack)], { type: 'application/json' });
+      saveBlob(blob, 'dyklogg-kopia-' + today() + '.json');
+      state.msg = 'Säkerhetskopian sparades som fil i telefonens nedladdningar.'; render();
+    }
+    var metas = []; state.docs.forEach(function (d) { d.files.forEach(function (f) { metas.push(f); }); });
+    if (!metas.length) return finish();
+    state.msg = 'Packar säkerhetskopian med dokument …'; render();
+    Promise.all(metas.map(function (f) {
+      return idbGet(f.id).then(function (rec) { return rec ? bufToDataUrl(rec.data, f.type).then(function (u) { pack.docFiles[f.id] = u; }) : null; });
+    })).then(finish).catch(function () { state.msg = 'Säkerhetskopian kunde inte skapas. Prova igen.'; render(); });
   }
   function restore(file) {
     var rd = new FileReader();
     rd.onload = function () {
+      var data, incoming;
       try {
-        var data = JSON.parse(rd.result), incoming = Array.isArray(data) ? data : data.dives;
+        data = JSON.parse(rd.result); incoming = Array.isArray(data) ? data : data.dives;
         if (!Array.isArray(incoming)) throw new Error('bad');
-        var fmap = {};
-        ((!Array.isArray(data) && data.folders) || []).forEach(function (f) {
-          if (!f || !f.id || !f.name) return;
-          var ex = state.folders.filter(function (x) { return x.id === f.id || x.name.toLowerCase() === String(f.name).toLowerCase(); })[0];
-          if (ex) fmap[f.id] = ex.id; else { state.folders.push({ id: f.id, name: String(f.name) }); fmap[f.id] = f.id; }
+      } catch (e) { state.msg = 'Filen gick inte att läsa. Välj en kopia som du sparat från DykLogg.'; return render(); }
+      var obj = Array.isArray(data) ? {} : data;
+      var fmap = {};
+      (obj.folders || []).forEach(function (f) {
+        if (!f || !f.id || !f.name) return;
+        var ex = state.folders.filter(function (x) { return x.id === f.id || x.name.toLowerCase() === String(f.name).toLowerCase(); })[0];
+        if (ex) fmap[f.id] = ex.id; else { state.folders.push({ id: f.id, name: String(f.name) }); fmap[f.id] = f.id; }
+      });
+      var haveT = {}; state.templates.forEach(function (t) { haveT[t.id] = 1; });
+      (obj.templates || []).forEach(function (t) {
+        if (t && t.id && t.name && !haveT[t.id]) { t.folder = t.folder ? (fmap[t.folder] || '') : ''; state.templates.push(t); }
+      });
+      var have = {}; state.dives.forEach(function (d) { have[d.id] = 1; });
+      var added = 0;
+      incoming.forEach(function (d) {
+        if (d && d.id && d.date && !have[d.id]) { d.folder = d.folder ? (fmap[d.folder] || '') : ''; state.dives.push(d); added++; }
+      });
+      var haveD = {}; state.docs.forEach(function (d) { haveD[d.id] = 1; });
+      var newDocs = (obj.docs || []).filter(function (d) { return d && d.id && d.title && Array.isArray(d.files) && !haveD[d.id]; });
+      var files = obj.docFiles || {}, jobs = [];
+      newDocs.forEach(function (d) {
+        d.files = d.files.filter(function (f) { return f && f.id && files[f.id]; });
+        d.files.forEach(function (f) {
+          jobs.push(fetch(files[f.id]).then(function (r) { return r.arrayBuffer(); }).then(function (buf) { return idbPut({ id: f.id, name: f.name, type: f.type, data: buf }); }));
         });
-        var haveT = {}; state.templates.forEach(function (t) { haveT[t.id] = 1; });
-        ((!Array.isArray(data) && data.templates) || []).forEach(function (t) {
-          if (t && t.id && t.name && !haveT[t.id]) { t.folder = t.folder ? (fmap[t.folder] || '') : ''; state.templates.push(t); }
-        });
-        var have = {}; state.dives.forEach(function (d) { have[d.id] = 1; });
-        var added = 0;
-        incoming.forEach(function (d) {
-          if (d && d.id && d.date && !have[d.id]) { d.folder = d.folder ? (fmap[d.folder] || '') : ''; state.dives.push(d); added++; }
-        });
-        persist(); state.msg = added + (added === 1 ? ' dyk lades' : ' dyk lades') + ' till från säkerhetskopian.';
-      } catch (e) { state.msg = 'Filen gick inte att läsa. Välj en kopia som du sparat från DykLogg.'; }
-      render();
+      });
+      function done(docsAdded, failed) {
+        persist();
+        state.msg = added + ' dyk' + (docsAdded ? ' och ' + docsAdded + (docsAdded === 1 ? ' dokument' : ' dokument') : '') + ' lades till från säkerhetskopian.' +
+          (failed ? ' Några dokument kunde inte läsas in.' : '');
+        render();
+      }
+      if (!jobs.length) return done(0, false);
+      Promise.all(jobs).then(function () { newDocs.forEach(function (d) { state.docs.push(d); }); done(newDocs.length, false); })
+        .catch(function () { done(0, true); });
     };
     rd.readAsText(file);
   }
@@ -841,11 +1129,13 @@
     var k = t.getAttribute('data-k'); if (k && state.form) state.form[k] = t.value;
     var tk = t.getAttribute('data-t'); if (tk && state.tplForm) state.tplForm[tk] = t.value;
     if (t.getAttribute('data-fe') !== null && state.folderEdit) state.folderEdit.value = t.value;
+    var dk = t.getAttribute('data-d'); if (dk && state.docForm) state.docForm[dk] = t.value;
   }
   document.addEventListener('input', function (e) { syncField(e.target); });
   document.addEventListener('change', function (e) {
     syncField(e.target);
     if (e.target.id === 'restoreFile' && e.target.files[0]) restore(e.target.files[0]);
+    if (e.target.id === 'docFile') { var picked = Array.prototype.slice.call(e.target.files || []); try { e.target.value = ''; } catch (x) {} addPicked(picked); }
   });
   /* håll in ett dyk i Dykbok för att börja markera */
   document.addEventListener('pointerdown', function (e) {
@@ -868,7 +1158,7 @@
   });
   document.addEventListener('click', function (e) {
     if (pressFired) { pressFired = false; return; }
-    var el = e.target.closest('[data-nav],[data-go],[data-open],[data-save],[data-edit],[data-delete],[data-cancel-edit],[data-xlsx],[data-sel-start],[data-sel-all],[data-sel-cancel],[data-move-open],[data-move-to],[data-move-new],[data-move-cancel],[data-stat-toggle],[data-folder],[data-folder-new],[data-folder-save],[data-folder-cancel],[data-folder-rename],[data-folder-del],[data-tpl-new],[data-tpl-edit],[data-tpl-save],[data-tpl-del],[data-tpl-use],[data-sign],[data-unsign],[data-print],[data-printall],[data-backup],[data-restore]');
+    var el = e.target.closest('[data-nav],[data-go],[data-open],[data-save],[data-edit],[data-delete],[data-cancel-edit],[data-xlsx],[data-doc-new],[data-doc-view],[data-doc-pick],[data-doc-rm-pending],[data-doc-rm-file],[data-doc-save],[data-doc-cancel],[data-doc-edit],[data-doc-del],[data-doc-img],[data-doc-pdf],[data-doc-share],[data-viewer-close],[data-sel-start],[data-sel-all],[data-sel-cancel],[data-move-open],[data-move-to],[data-move-new],[data-move-cancel],[data-stat-toggle],[data-folder],[data-folder-new],[data-folder-save],[data-folder-cancel],[data-folder-rename],[data-folder-del],[data-tpl-new],[data-tpl-edit],[data-tpl-save],[data-tpl-del],[data-tpl-use],[data-sign],[data-unsign],[data-print],[data-printall],[data-backup],[data-restore]');
     if (!el) return;
     if (el.hasAttribute('data-nav') || el.hasAttribute('data-go')) return go(el.getAttribute('data-nav') || el.getAttribute('data-go'));
     if (el.hasAttribute('data-sel-start')) { state.selecting = true; state.selected = {}; return render(); }
@@ -907,6 +1197,34 @@
     if (el.hasAttribute('data-print')) { document.body.classList.remove('print-all'); return window.print(); }
     if (el.hasAttribute('data-printall')) return printAll();
     if (el.hasAttribute('data-xlsx')) return exportXlsx();
+    if (el.hasAttribute('data-doc-new')) return openDocForm('');
+    if (el.hasAttribute('data-doc-view')) return openDoc(el.getAttribute('data-doc-view'));
+    if (el.hasAttribute('data-doc-pick')) { var fi2 = document.getElementById('docFile'); if (fi2) fi2.click(); return; }
+    if (el.hasAttribute('data-doc-rm-pending')) {
+      var rid = el.getAttribute('data-doc-rm-pending');
+      state.docPending = state.docPending.filter(function (r) { if (r.id === rid && r.thumb) { try { URL.revokeObjectURL(r.thumb); } catch (x) {} } return r.id !== rid; });
+      return render();
+    }
+    if (el.hasAttribute('data-doc-rm-file')) { state.docRemoved.push(el.getAttribute('data-doc-rm-file')); return render(); }
+    if (el.hasAttribute('data-doc-save')) return saveDoc();
+    if (el.hasAttribute('data-doc-cancel')) {
+      var back = state.docEditId; clearPending(); state.docForm = null; state.docEditId = null; state.error = '';
+      if (back) return openDoc(back);
+      state.screen = 'docs'; render(); return window.scrollTo(0, 0);
+    }
+    if (el.hasAttribute('data-doc-edit')) return openDocForm(state.docId);
+    if (el.hasAttribute('data-doc-del')) {
+      if (!state.armedDocDel) { state.armedDocDel = true; return render(); }
+      return deleteDoc(state.docId);
+    }
+    if (el.hasAttribute('data-doc-img')) { state.viewerUrl = el.getAttribute('data-doc-img'); return render(); }
+    if (el.hasAttribute('data-viewer-close')) { state.viewerUrl = ''; return render(); }
+    if (el.hasAttribute('data-doc-pdf')) {
+      var pu = state.docUrls[el.getAttribute('data-doc-pdf')];
+      if (pu) { var w = window.open(pu, '_blank'); if (!w) shareFile(el.getAttribute('data-doc-pdf')); }
+      return;
+    }
+    if (el.hasAttribute('data-doc-share')) return shareFile(el.getAttribute('data-doc-share'));
     if (el.hasAttribute('data-folder')) { state.folderFilter = el.getAttribute('data-folder'); state.armedFolderDel = false; state.folderEdit = null; state.selected = {}; state.msg = ''; return render(); }
     if (el.hasAttribute('data-folder-new')) { state.folderEdit = { mode: 'new', value: '', id: '' }; state.armedFolderDel = false; return render(); }
     if (el.hasAttribute('data-folder-rename')) { var rf = activeFolder(); if (rf) { state.folderEdit = { mode: 'rename', value: rf.name, id: rf.id }; } return render(); }
