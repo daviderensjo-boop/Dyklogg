@@ -629,7 +629,7 @@
       '<label class="f"><span>Sluttid</span><input class="in" type="time" data-k="end" value="' + esc(f.end) + '"></label></div>';
     html += '<label class="f"><span>Maxdjup (m)</span><input class="in" type="text" inputmode="decimal" data-k="depth" placeholder="t.ex. 18,5" value="' + esc(f.depth) + '"></label>';
     var tabOpts = suggestions('dyktabell');
-    html += '<div class="pair"><label class="f"><span>Dyktabell</span><input class="in" type="text" data-k="dyktabell" list="dl-dyktabell" autocomplete="off" value="' + esc(f.dyktabell) + '">' +
+    html += '<div class="pair"><label class="f"><span>Dyktabell</span><input class="in" type="text" data-k="dyktabell" list="dl-dyktabell" autocomplete="off" placeholder="t.ex. SWEN21B" value="' + esc(f.dyktabell) + '">' +
       (tabOpts.length ? '<datalist id="dl-dyktabell">' + tabOpts.map(function (o) { return '<option value="' + esc(o) + '">'; }).join('') + '</datalist>' : '') + '</label>' +
       '<label class="f"><span>Gruppbeteckning</span><input class="in" type="text" data-k="group" maxlength="20" autocomplete="off" value="' + esc(f.group) + '"></label></div>';
     FIELDS.forEach(function (fd) {
