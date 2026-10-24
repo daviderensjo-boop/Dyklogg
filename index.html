@@ -211,7 +211,6 @@
 (function () {
   var STORAGE_KEY = 'dyklogg.dives.v1';
   var DOCS_KEY = 'dyklogg.docs.v1';
-  var DOCCATS = ['Certifikat', 'Läkarundersökning', 'HLR / första hjälpen', 'Heta arbeten', 'Övrigt'];
   var MAX_PDF = 15 * 1024 * 1024;
   var FOLDERS_KEY = 'dyklogg.folders.v1';
   var TPL_KEY = 'dyklogg.templates.v1';
@@ -301,7 +300,6 @@
   }
   function findDoc(id) { return state.docs.filter(function (d) { return d.id === id; })[0]; }
   function fmtSize(b) { return b >= 1048576 ? (b / 1048576).toFixed(1).replace('.', ',') + ' MB' : Math.max(1, Math.round(b / 1024)) + ' kB'; }
-  function docCat(d) { return DOCCATS.indexOf(d.cat) >= 0 ? d.cat : 'Övrigt'; }
   function expiryInfo(d) {
     if (!d.expires) return null;
     var days = Math.round((new Date(d.expires + 'T12:00:00') - new Date(today() + 'T12:00:00')) / 86400000);
@@ -365,7 +363,7 @@
     var d = id && findDoc(id);
     clearPending();
     state.docEditId = d ? d.id : null;
-    state.docForm = d ? { title: d.title, cat: docCat(d), expires: d.expires || '', note: d.note || '' } : { title: '', cat: DOCCATS[0], expires: '', note: '' };
+    state.docForm = d ? { title: d.title, expires: d.expires || '', note: d.note || '' } : { title: '', expires: '', note: '' };
     state.screen = 'docform'; state.error = ''; render(); window.scrollTo(0, 0);
   }
   function saveDoc() {
@@ -380,7 +378,7 @@
       .then(function () { return Promise.all(removed.map(idbDel)); })
       .then(function () {
         var doc = editing || { id: uid(), added: new Date().toISOString(), files: [] };
-        doc.title = title; doc.cat = f.cat; doc.expires = f.expires || ''; doc.note = (f.note || '').trim();
+        doc.title = title; delete doc.cat; doc.expires = f.expires || ''; doc.note = (f.note || '').trim();
         doc.files = kept.concat(pending.map(function (r) { return { id: r.id, name: r.name, type: r.type, size: r.size }; }));
         if (!editing) state.docs.push(doc);
         clearPending(); persist(); state.docBusy = false; state.docForm = null; state.docEditId = null;
@@ -758,13 +756,10 @@
     if (!state.docs.length) {
       html += '<div class="empty"><b>Inga dokument ännu</b>Fota ditt certifikat eller välj en PDF, så finns det samlat med dina dyk.</div>';
     } else {
-      DOCCATS.forEach(function (cat) {
-        var items = state.docs.filter(function (d) { return docCat(d) === cat; }).sort(function (a, b) { return a.title.localeCompare(b.title, 'sv'); });
-        if (!items.length) return;
-        html += '<h3>' + esc(cat) + '</h3><ul class="list">' + items.map(function (d) {
-          return '<li><button data-doc-view="' + esc(d.id) + '"><div class="top"><strong>' + esc(d.title) + '</strong><span class="sub">' + d.files.length + (d.files.length === 1 ? ' fil' : ' filer') + '</span></div>' + docStatusLine(d) + '</button></li>';
-        }).join('') + '</ul>';
-      });
+      var items = state.docs.slice().sort(function (x, y) { return x.title.localeCompare(y.title, 'sv'); });
+      html += '<ul class="list" style="margin-top:18px">' + items.map(function (d) {
+        return '<li><button data-doc-view="' + esc(d.id) + '"><div class="top"><strong>' + esc(d.title) + '</strong><span class="sub">' + d.files.length + (d.files.length === 1 ? ' fil' : ' filer') + '</span></div>' + docStatusLine(d) + '</button></li>';
+      }).join('') + '</ul>';
     }
     return html;
   }
@@ -774,7 +769,7 @@
     var html = '<button class="back" data-go="docs">‹ Dokument</button><h2>' + esc(d.title) + '</h2>';
     if (state.error) html += '<p class="err" role="alert">' + esc(state.error) + '</p>';
     var info = expiryInfo(d);
-    var rows = [['Kategori', docCat(d)], ['Giltighet', info ? info.text : ''], ['Anteckning', d.note], ['Tillagd', d.added ? fmtDate(d.added.slice(0, 10)) : '']].filter(function (r) { return r[1]; });
+    var rows = [['Giltighet', info ? info.text : ''], ['Anteckning', d.note], ['Tillagd', d.added ? fmtDate(d.added.slice(0, 10)) : '']].filter(function (r) { return r[1]; });
     html += '<dl>' + rows.map(function (r) { return '<div><dt>' + r[0] + '</dt><dd>' + esc(r[1]) + '</dd></div>'; }).join('') + '</dl><h3>Filer</h3>';
     if (state.docLoading) html += '<p class="hint">Laddar filer …</p>';
     else d.files.forEach(function (f) {
@@ -798,8 +793,7 @@
     var f = state.docForm, editing = state.docEditId ? findDoc(state.docEditId) : null;
     var html = '<button class="back" data-doc-cancel>‹ Avbryt</button><h2>' + (editing ? 'Ändra dokument' : 'Nytt dokument') + '</h2>';
     if (state.error) html += '<p class="err" id="err" role="alert">' + esc(state.error) + '</p>';
-    html += '<label class="f"><span>Namn</span><input class="in" type="text" data-d="title" maxlength="60" placeholder="t.ex. Dykcertifikat, Läkarundersökning" value="' + esc(f.title) + '"></label>' +
-      '<label class="f"><span>Kategori</span><select class="in" data-d="cat">' + DOCCATS.map(function (c) { return '<option' + (c === f.cat ? ' selected' : '') + '>' + esc(c) + '</option>'; }).join('') + '</select></label>' +
+    html += '<label class="f"><span>Namn</span><input class="in" type="text" data-d="title" maxlength="60" placeholder="t.ex. Dykcertifikat, Läkarundersökning, HLR" value="' + esc(f.title) + '"></label>' +
       '<label class="f"><span>Giltigt till (valfritt)</span><input class="in" type="date" data-d="expires" value="' + esc(f.expires) + '"></label>' +
       '<label class="f"><span>Anteckning (valfritt)</span><textarea class="in" style="min-height:70px" data-d="note">' + esc(f.note) + '</textarea></label>';
     html += '<div class="f"><span class="lbl">Foton och PDF</span>';
