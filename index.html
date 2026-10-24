@@ -371,7 +371,6 @@
     var f = state.docForm, title = (f.title || '').trim(), editing = state.docEditId ? findDoc(state.docEditId) : null;
     if (!title) { state.error = 'Ge dokumentet ett namn.'; return render(); }
     var kept = editing ? editing.files.filter(function (x) { return state.docRemoved.indexOf(x.id) < 0; }) : [];
-    if (!kept.length && !state.docPending.length) { state.error = 'Lägg till minst ett foto eller en PDF.'; return render(); }
     state.docBusy = true; state.error = ''; render();
     var pending = state.docPending.slice(), removed = state.docRemoved.slice();
     Promise.all(pending.map(function (r) { return idbPut({ id: r.id, name: r.name, type: r.type, data: r.data }); }))
@@ -629,6 +628,10 @@
     html += '<div class="pair"><label class="f"><span>Starttid</span><input class="in" type="time" data-k="start" value="' + esc(f.start) + '"></label>' +
       '<label class="f"><span>Sluttid</span><input class="in" type="time" data-k="end" value="' + esc(f.end) + '"></label></div>';
     html += '<label class="f"><span>Maxdjup (m)</span><input class="in" type="text" inputmode="decimal" data-k="depth" placeholder="t.ex. 18,5" value="' + esc(f.depth) + '"></label>';
+    var tabOpts = suggestions('dyktabell');
+    html += '<div class="pair"><label class="f"><span>Dyktabell</span><input class="in" type="text" data-k="dyktabell" list="dl-dyktabell" autocomplete="off" value="' + esc(f.dyktabell) + '">' +
+      (tabOpts.length ? '<datalist id="dl-dyktabell">' + tabOpts.map(function (o) { return '<option value="' + esc(o) + '">'; }).join('') + '</datalist>' : '') + '</label>' +
+      '<label class="f"><span>Gruppbeteckning</span><input class="in" type="text" data-k="group" maxlength="20" autocomplete="off" value="' + esc(f.group) + '"></label></div>';
     FIELDS.forEach(function (fd) {
       var key = fd[0], opts = suggestions(key);
       html += '<label class="f"><span>' + fd[1] + '</span><input class="in" type="text" data-k="' + key + '" list="dl-' + key + '" autocomplete="off" value="' + esc(f[key]) + '">';
@@ -758,7 +761,7 @@
     } else {
       var items = state.docs.slice().sort(function (x, y) { return x.title.localeCompare(y.title, 'sv'); });
       html += '<ul class="list" style="margin-top:18px">' + items.map(function (d) {
-        return '<li><button data-doc-view="' + esc(d.id) + '"><div class="top"><strong>' + esc(d.title) + '</strong><span class="sub">' + d.files.length + (d.files.length === 1 ? ' fil' : ' filer') + '</span></div>' + docStatusLine(d) + '</button></li>';
+        return '<li><button data-doc-view="' + esc(d.id) + '"><div class="top"><strong>' + esc(d.title) + '</strong><span class="sub">' + (d.files.length === 0 ? 'Inga filer' : d.files.length + (d.files.length === 1 ? ' fil' : ' filer')) + '</span></div>' + docStatusLine(d) + '</button></li>';
       }).join('') + '</ul>';
     }
     return html;
@@ -772,6 +775,7 @@
     var rows = [['Giltighet', info ? info.text : ''], ['Anteckning', d.note], ['Tillagd', d.added ? fmtDate(d.added.slice(0, 10)) : '']].filter(function (r) { return r[1]; });
     html += '<dl>' + rows.map(function (r) { return '<div><dt>' + r[0] + '</dt><dd>' + esc(r[1]) + '</dd></div>'; }).join('') + '</dl><h3>Filer</h3>';
     if (state.docLoading) html += '<p class="hint">Laddar filer …</p>';
+    else if (!d.files.length) html += '<p class="hint">Inga filer ännu. Tryck på Ändra för att lägga till foto eller PDF.</p>';
     else d.files.forEach(function (f) {
       var url = state.docUrls[f.id];
       if (!url) { html += '<div class="docfile"><p class="note">Filen ' + esc(f.name) + ' hittades inte.</p></div>'; return; }
@@ -796,7 +800,7 @@
     html += '<label class="f"><span>Namn</span><input class="in" type="text" data-d="title" maxlength="60" placeholder="t.ex. Dykcertifikat, Läkarundersökning, HLR" value="' + esc(f.title) + '"></label>' +
       '<label class="f"><span>Giltigt till (valfritt)</span><input class="in" type="date" data-d="expires" value="' + esc(f.expires) + '"></label>' +
       '<label class="f"><span>Anteckning (valfritt)</span><textarea class="in" style="min-height:70px" data-d="note">' + esc(f.note) + '</textarea></label>';
-    html += '<div class="f"><span class="lbl">Foton och PDF</span>';
+    html += '<div class="f"><span class="lbl">Foton och PDF (valfritt)</span>';
     if (editing) editing.files.filter(function (x) { return state.docRemoved.indexOf(x.id) < 0; }).forEach(function (x) {
       html += '<div class="frow"><span class="ico">' + (/^image\//.test(x.type) ? 'FOTO' : 'PDF') + '</span><span class="nm">' + esc(x.name) + '<small>' + fmtSize(x.size) + '</small></span><button data-doc-rm-file="' + esc(x.id) + '">Ta bort</button></div>';
     });
@@ -853,7 +857,7 @@
     if (!d) return bookView();
     var rows = [
       ['Datum', fmtDate(d.date)], ['Tid', (d.start && d.end) ? d.start + '–' + d.end : ''], ['Bottentid', fmtDur(minutes(d))],
-      ['Maxdjup', fmtNum(num(d.depth)) + ' m'], ['Uppgift', d.task], ['Arbetslag', d.team], ['Bolag', d.company],
+      ['Maxdjup', fmtNum(num(d.depth)) + ' m'], ['Dyktabell', d.dyktabell], ['Gruppbeteckning', d.group], ['Uppgift', d.task], ['Arbetslag', d.team], ['Bolag', d.company],
       ['Plats', d.location], ['Hjälm', d.helmet], ['Regulator', d.regulator], ['Mapp', folderName(d.folder)], ['Anteckningar', d.notes]
     ].filter(function (r) { return r[1]; });
     var html = '<button class="back" data-go="book">‹ Dykbok</button><h2>' + esc(fmtDate(d.date)) + '</h2><dl>';
@@ -878,7 +882,7 @@
   }
 
   /* ---------- åtgärder ---------- */
-  function blankForm() { return { date: today(), start: '', end: '', depth: '', task: '', team: '', company: '', location: '', helmet: '', regulator: '', folder: '', notes: '' }; }
+  function blankForm() { return { date: today(), start: '', end: '', depth: '', task: '', team: '', company: '', location: '', helmet: '', regulator: '', dyktabell: '', group: '', folder: '', notes: '' }; }
   function go(screen) {
     state.screen = screen; state.error = ''; state.armedDelete = false; state.armedSig = ''; state.msg = '';
     state.folderEdit = null; state.armedFolderDel = false; state.armedTplDel = false; state.tplApplied = '';
@@ -987,12 +991,12 @@
     return '<c r="' + ref + '" t="inlineStr"' + st + '><is><t xml:space="preserve">' + xmlEsc(v) + '</t></is></c>';
   }
   function buildXlsx() {
-    var head = ['Datum', 'Start', 'Slut', 'Bottentid (min)', 'Maxdjup (m)', 'Uppgift', 'Arbetslag', 'Bolag', 'Plats', 'Hjälm', 'Regulator', 'Anteckningar', 'Dykare', 'Dykare signerad', 'Dykledare', 'Dykledare signerad', 'Mapp'];
-    var widths = [12, 8, 8, 15, 12, 22, 18, 18, 18, 16, 16, 34, 18, 20, 18, 20, 18];
+    var head = ['Datum', 'Start', 'Slut', 'Bottentid (min)', 'Maxdjup (m)', 'Uppgift', 'Arbetslag', 'Bolag', 'Plats', 'Hjälm', 'Regulator', 'Dyktabell', 'Gruppbeteckning', 'Anteckningar', 'Dykare', 'Dykare signerad', 'Dykledare', 'Dykledare signerad', 'Mapp'];
+    var widths = [12, 8, 8, 15, 12, 22, 18, 18, 18, 16, 16, 16, 18, 34, 18, 20, 18, 20, 18];
     var rows = [head.map(function (h, i) { return xcell(i, 1, h, true); }).join('')];
     filtered().reverse().forEach(function (d, idx) {
       var r = idx + 2, sd = d.sig && d.sig.diver, sl = d.sig && d.sig.leader;
-      var vals = [d.date, d.start, d.end, minutes(d) || '', num(d.depth), d.task, d.team, d.company, d.location, d.helmet, d.regulator, d.notes,
+      var vals = [d.date, d.start, d.end, minutes(d) || '', num(d.depth), d.task, d.team, d.company, d.location, d.helmet, d.regulator, d.dyktabell, d.group, d.notes,
         sd ? sd.name : '', sd ? fmtStamp(sd.at) : '', sl ? sl.name : '', sl ? fmtStamp(sl.at) : '', folderName(d.folder)];
       rows.push(vals.map(function (v, i) { return xcell(i, r, v, false); }).join(''));
     });
@@ -1040,7 +1044,7 @@
     list.forEach(function (d) {
       var rows = [
         ['Tid', (d.start && d.end) ? d.start + '–' + d.end : ''], ['Bottentid', fmtDur(minutes(d))],
-        ['Maxdjup', fmtNum(num(d.depth)) + ' m'], ['Uppgift', d.task], ['Arbetslag', d.team], ['Bolag', d.company],
+        ['Maxdjup', fmtNum(num(d.depth)) + ' m'], ['Dyktabell', d.dyktabell], ['Gruppbeteckning', d.group], ['Uppgift', d.task], ['Arbetslag', d.team], ['Bolag', d.company],
         ['Plats', d.location], ['Hjälm', d.helmet], ['Regulator', d.regulator], ['Anteckningar', d.notes]
       ].filter(function (x) { return x[1]; });
       html += '<div class="pdive"><h3>' + esc(fmtDate(d.date)) + '</h3><dl>' +
