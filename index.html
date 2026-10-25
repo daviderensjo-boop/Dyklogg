@@ -940,7 +940,7 @@
     if (!state.editId) {
       if (!state.repeatAnswered) {
         var pv = previousDive(f);
-        if (pv && pv.minutes >= 0 && pv.minutes <= 780) {
+        if (pv && pv.minutes >= 0 && pv.minutes <= 960) {
           state.repeat = { step: 'ask', prevId: pv.dive.id, minutes: pv.minutes, group: '', h: String(Math.floor(pv.minutes / 60)), m: String(pv.minutes % 60), error: '', total: pv.minutes };
           return render();
         }
