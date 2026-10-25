@@ -221,7 +221,8 @@
     folderFilter: 'all', folderEdit: null, armedFolderDel: false, tplForm: null, tplEditId: null, armedTplDel: false, tplApplied: '',
     selecting: false, selected: {}, moveOpen: false,
     docs: [], docsOk: true, docId: null, docForm: null, docEditId: null, docPending: [], docRemoved: [], docBusy: false,
-    docUrls: {}, docLoading: false, armedDocDel: false, viewerUrl: ''
+    docUrls: {}, docLoading: false, armedDocDel: false, viewerUrl: '',
+    repeat: null, repeatAnswered: ''
   };
   var pressTimer = null, pressFired = false, pressStart = null;
   var FIELDS = [
@@ -422,6 +423,24 @@
   }
   function bufToDataUrl(buf, type) {
     return new Promise(function (res, rej) { var r = new FileReader(); r.onload = function () { res(r.result); }; r.onerror = rej; r.readAsDataURL(new Blob([buf], { type: type })); });
+  }
+  function dtMs(date, time) { return new Date(date + 'T' + time + ':00').getTime(); }
+  function endMs(d) {
+    if (!d.date || !d.start || !d.end) return NaN;
+    var s0 = dtMs(d.date, d.start), e0 = dtMs(d.date, d.end);
+    return e0 < s0 ? e0 + 86400000 : e0;
+  }
+  function previousDive(f) {
+    if (!f.date || !f.start) return null;
+    var startMs = dtMs(f.date, f.start), best = null, bestEnd = -Infinity;
+    if (isNaN(startMs)) return null;
+    state.dives.forEach(function (d) {
+      if (state.editId && d.id === state.editId) return;
+      var e0 = endMs(d);
+      if (isNaN(e0) || e0 > startMs) return;
+      if (e0 > bestEnd) { bestEnd = e0; best = d; }
+    });
+    return best ? { dive: best, minutes: Math.round((startMs - bestEnd) / 60000) } : null;
   }
   function selIds() { return Object.keys(state.selected).filter(function (id) { return state.selected[id]; }); }
   function clearSelection() {
@@ -632,6 +651,8 @@
     html += '<div class="pair"><label class="f"><span>Dyktabell</span><input class="in" type="text" data-k="dyktabell" list="dl-dyktabell" autocomplete="off" placeholder="t.ex. SWEN21B" value="' + esc(f.dyktabell) + '">' +
       (tabOpts.length ? '<datalist id="dl-dyktabell">' + tabOpts.map(function (o) { return '<option value="' + esc(o) + '">'; }).join('') + '</datalist>' : '') + '</label>' +
       '<label class="f"><span>Gruppbeteckning</span><input class="in" type="text" data-k="group" maxlength="20" autocomplete="off" value="' + esc(f.group) + '"></label></div>';
+    if (f.repeat) html += '<div class="pair"><label class="f"><span>Grupp före dyket</span><input class="in" type="text" data-k="groupBefore" maxlength="20" autocomplete="off" value="' + esc(f.groupBefore) + '"></label>' +
+      '<label class="f"><span>Ytintervall (min)</span><input class="in" type="text" inputmode="numeric" data-k="surfaceInterval" value="' + esc(f.surfaceInterval) + '"></label></div>';
     FIELDS.forEach(function (fd) {
       var key = fd[0], opts = suggestions(key);
       html += '<label class="f"><span>' + fd[1] + '</span><input class="in" type="text" data-k="' + key + '" list="dl-' + key + '" autocomplete="off" value="' + esc(f[key]) + '">';
@@ -642,6 +663,24 @@
     html += '<label class="f"><span>Anteckningar</span><textarea class="in" data-k="notes">' + esc(f.notes) + '</textarea></label>';
     html += '<button class="btn" data-save>' + (editing ? 'Spara ändringar' : 'Spara dyk') + '</button>';
     if (editing) html += '<div class="row"><button class="btn secondary" data-cancel-edit>Avbryt</button></div>';
+    if (state.repeat) {
+      var r = state.repeat, pd = findDive(r.prevId);
+      html += '<div class="backdrop"></div><div class="panel" role="dialog" aria-modal="true" aria-label="Upprepat dyk"><div>';
+      if (r.step === 'ask') {
+        html += '<h3 style="margin-top:0">Upprepat dyk?</h3><p>Det är ' + esc(fmtDur(r.minutes) || '0 min') + ' mellan föregående dyk' +
+          (pd ? ' (' + esc(fmtDate(pd.date)) + ', slut ' + esc(pd.end) + ')' : '') + ' och det här dyket. Vill du registrera det som ett upprepat dyk?</p>' +
+          '<div class="row"><button class="btn secondary" data-rep-no>Nej</button><button class="btn" data-rep-yes>Ja</button></div>' +
+          '<div class="row"><button class="btn secondary small" data-rep-cancel>Avbryt</button></div>';
+      } else {
+        html += '<h3 style="margin-top:0">Upprepat dyk</h3>' + (r.error ? '<p class="err">' + esc(r.error) + '</p>' : '') +
+          '<label class="f"><span>Gruppbeteckning före dyket</span><input class="in" type="text" data-r="group" maxlength="20" autocomplete="off" value="' + esc(r.group) + '"></label>' +
+          (pd && pd.group ? '<p class="hint" style="margin:-8px 0 12px">Föregående dyk hade gruppbeteckning ' + esc(pd.group) + '.</p>' : '') +
+          '<span class="lbl">Ytintervall</span><div class="pair"><label class="f"><span>Timmar</span><input class="in" type="text" inputmode="numeric" data-r="h" value="' + esc(r.h) + '"></label>' +
+          '<label class="f"><span>Minuter</span><input class="in" type="text" inputmode="numeric" data-r="m" value="' + esc(r.m) + '"></label></div>' +
+          '<button class="btn" data-rep-save>Spara dyk</button><div class="row"><button class="btn secondary small" data-rep-cancel>Avbryt</button></div>';
+      }
+      html += '</div></div>';
+    }
     return html;
   }
 
@@ -857,7 +896,8 @@
     if (!d) return bookView();
     var rows = [
       ['Datum', fmtDate(d.date)], ['Tid', (d.start && d.end) ? d.start + '–' + d.end : ''], ['Bottentid', fmtDur(minutes(d))],
-      ['Maxdjup', fmtNum(num(d.depth)) + ' m'], ['Dyktabell', d.dyktabell], ['Gruppbeteckning', d.group], ['Uppgift', d.task], ['Arbetslag', d.team], ['Bolag', d.company],
+      ['Maxdjup', fmtNum(num(d.depth)) + ' m'], ['Dyktabell', d.dyktabell], ['Gruppbeteckning', d.group], ['Upprepat dyk', d.repeat ? 'Ja' : ''], ['Gruppbeteckning före', d.groupBefore],
+        ['Ytintervall', d.repeat ? (d.surfaceInterval ? fmtDur(Number(d.surfaceInterval)) : '0 min') : ''], ['Uppgift', d.task], ['Arbetslag', d.team], ['Bolag', d.company],
       ['Plats', d.location], ['Hjälm', d.helmet], ['Regulator', d.regulator], ['Mapp', folderName(d.folder)], ['Anteckningar', d.notes]
     ].filter(function (r) { return r[1]; });
     var html = '<button class="back" data-go="book">‹ Dykbok</button><h2>' + esc(fmtDate(d.date)) + '</h2><dl>';
@@ -886,7 +926,7 @@
   function go(screen) {
     state.screen = screen; state.error = ''; state.armedDelete = false; state.armedSig = ''; state.msg = '';
     state.folderEdit = null; state.armedFolderDel = false; state.armedTplDel = false; state.tplApplied = '';
-    clearSelection(); revokeDocUrls(); clearPending(); state.viewerUrl = ''; state.armedDocDel = false;
+    clearSelection(); revokeDocUrls(); clearPending(); state.viewerUrl = ''; state.armedDocDel = false; state.repeat = null; state.repeatAnswered = '';
     if (screen === 'log') { state.editId = null; state.form = blankForm(); var af = activeFolder(); if (af) state.form.folder = af.id; }
     render(); window.scrollTo(0, 0);
   }
@@ -896,15 +936,31 @@
     if (!f.depth.trim() || num(f.depth) <= 0) { state.error = 'Fyll i maxdjup i meter, till exempel 18,5.'; return render(); }
     var clean = {};
     Object.keys(f).forEach(function (k) { clean[k] = typeof f[k] === 'string' ? f[k].trim() : f[k]; });
+    if (clean.repeat) clean.surfaceInterval = parseInt(clean.surfaceInterval, 10) || 0;
+    if (!state.editId) {
+      if (!state.repeatAnswered) {
+        var pv = previousDive(f);
+        if (pv && pv.minutes >= 0 && pv.minutes <= 780) {
+          state.repeat = { step: 'ask', prevId: pv.dive.id, minutes: pv.minutes, group: '', h: String(Math.floor(pv.minutes / 60)), m: String(pv.minutes % 60), error: '', total: pv.minutes };
+          return render();
+        }
+      } else if (state.repeatAnswered === 'yes' && state.repeat) {
+        clean.repeat = true; clean.groupBefore = (state.repeat.group || '').trim(); clean.surfaceInterval = state.repeat.total;
+      }
+    }
     if (state.editId) {
       var old = findDive(state.editId), changed = false;
-      Object.keys(clean).forEach(function (k) { if (k !== 'folder' && (old[k] || '') !== clean[k]) changed = true; });
+      Object.keys(clean).forEach(function (k) {
+        var a = old[k] == null ? '' : String(old[k]), b = clean[k] == null ? '' : String(clean[k]);
+        if (k !== 'folder' && a !== b) changed = true;
+      });
       Object.keys(clean).forEach(function (k) { old[k] = clean[k]; });
       if (changed) delete old.sig;
       state.detailId = state.editId; state.editId = null; state.screen = 'detail';
     } else {
       clean.id = uid(); state.dives = [clean].concat(state.dives); state.screen = 'book';
     }
+    state.repeat = null; state.repeatAnswered = '';
     state.error = ''; state.form = null; persist(); render(); window.scrollTo(0, 0);
   }
   function saveFolder() {
@@ -991,12 +1047,12 @@
     return '<c r="' + ref + '" t="inlineStr"' + st + '><is><t xml:space="preserve">' + xmlEsc(v) + '</t></is></c>';
   }
   function buildXlsx() {
-    var head = ['Datum', 'Start', 'Slut', 'Bottentid (min)', 'Maxdjup (m)', 'Uppgift', 'Arbetslag', 'Bolag', 'Plats', 'Hjälm', 'Regulator', 'Dyktabell', 'Gruppbeteckning', 'Anteckningar', 'Dykare', 'Dykare signerad', 'Dykledare', 'Dykledare signerad', 'Mapp'];
-    var widths = [12, 8, 8, 15, 12, 22, 18, 18, 18, 16, 16, 16, 18, 34, 18, 20, 18, 20, 18];
+    var head = ['Datum', 'Start', 'Slut', 'Bottentid (min)', 'Maxdjup (m)', 'Uppgift', 'Arbetslag', 'Bolag', 'Plats', 'Hjälm', 'Regulator', 'Dyktabell', 'Gruppbeteckning', 'Upprepat dyk', 'Grupp före', 'Ytintervall (min)', 'Anteckningar', 'Dykare', 'Dykare signerad', 'Dykledare', 'Dykledare signerad', 'Mapp'];
+    var widths = [12, 8, 8, 15, 12, 22, 18, 18, 18, 16, 16, 16, 18, 12, 14, 16, 34, 18, 20, 18, 20, 18];
     var rows = [head.map(function (h, i) { return xcell(i, 1, h, true); }).join('')];
     filtered().reverse().forEach(function (d, idx) {
       var r = idx + 2, sd = d.sig && d.sig.diver, sl = d.sig && d.sig.leader;
-      var vals = [d.date, d.start, d.end, minutes(d) || '', num(d.depth), d.task, d.team, d.company, d.location, d.helmet, d.regulator, d.dyktabell, d.group, d.notes,
+      var vals = [d.date, d.start, d.end, minutes(d) || '', num(d.depth), d.task, d.team, d.company, d.location, d.helmet, d.regulator, d.dyktabell, d.group, d.repeat ? 'Ja' : '', d.groupBefore, d.repeat ? (Number(d.surfaceInterval) || 0) : '', d.notes,
         sd ? sd.name : '', sd ? fmtStamp(sd.at) : '', sl ? sl.name : '', sl ? fmtStamp(sl.at) : '', folderName(d.folder)];
       rows.push(vals.map(function (v, i) { return xcell(i, r, v, false); }).join(''));
     });
@@ -1044,7 +1100,8 @@
     list.forEach(function (d) {
       var rows = [
         ['Tid', (d.start && d.end) ? d.start + '–' + d.end : ''], ['Bottentid', fmtDur(minutes(d))],
-        ['Maxdjup', fmtNum(num(d.depth)) + ' m'], ['Dyktabell', d.dyktabell], ['Gruppbeteckning', d.group], ['Uppgift', d.task], ['Arbetslag', d.team], ['Bolag', d.company],
+        ['Maxdjup', fmtNum(num(d.depth)) + ' m'], ['Dyktabell', d.dyktabell], ['Gruppbeteckning', d.group], ['Upprepat dyk', d.repeat ? 'Ja' : ''], ['Gruppbeteckning före', d.groupBefore],
+        ['Ytintervall', d.repeat ? (d.surfaceInterval ? fmtDur(Number(d.surfaceInterval)) : '0 min') : ''], ['Uppgift', d.task], ['Arbetslag', d.team], ['Bolag', d.company],
         ['Plats', d.location], ['Hjälm', d.helmet], ['Regulator', d.regulator], ['Anteckningar', d.notes]
       ].filter(function (x) { return x[1]; });
       html += '<div class="pdive"><h3>' + esc(fmtDate(d.date)) + '</h3><dl>' +
@@ -1128,6 +1185,7 @@
     var tk = t.getAttribute('data-t'); if (tk && state.tplForm) state.tplForm[tk] = t.value;
     if (t.getAttribute('data-fe') !== null && state.folderEdit) state.folderEdit.value = t.value;
     var dk = t.getAttribute('data-d'); if (dk && state.docForm) state.docForm[dk] = t.value;
+    var rk = t.getAttribute('data-r'); if (rk && state.repeat) state.repeat[rk] = t.value;
   }
   document.addEventListener('input', function (e) { syncField(e.target); });
   document.addEventListener('change', function (e) {
@@ -1156,7 +1214,7 @@
   });
   document.addEventListener('click', function (e) {
     if (pressFired) { pressFired = false; return; }
-    var el = e.target.closest('[data-nav],[data-go],[data-open],[data-save],[data-edit],[data-delete],[data-cancel-edit],[data-xlsx],[data-doc-new],[data-doc-view],[data-doc-pick],[data-doc-rm-pending],[data-doc-rm-file],[data-doc-save],[data-doc-cancel],[data-doc-edit],[data-doc-del],[data-doc-img],[data-doc-pdf],[data-doc-share],[data-viewer-close],[data-sel-start],[data-sel-all],[data-sel-cancel],[data-move-open],[data-move-to],[data-move-new],[data-move-cancel],[data-stat-toggle],[data-folder],[data-folder-new],[data-folder-save],[data-folder-cancel],[data-folder-rename],[data-folder-del],[data-tpl-new],[data-tpl-edit],[data-tpl-save],[data-tpl-del],[data-tpl-use],[data-sign],[data-unsign],[data-print],[data-printall],[data-backup],[data-restore]');
+    var el = e.target.closest('[data-nav],[data-go],[data-open],[data-save],[data-edit],[data-delete],[data-cancel-edit],[data-xlsx],[data-rep-yes],[data-rep-no],[data-rep-save],[data-rep-cancel],[data-doc-new],[data-doc-view],[data-doc-pick],[data-doc-rm-pending],[data-doc-rm-file],[data-doc-save],[data-doc-cancel],[data-doc-edit],[data-doc-del],[data-doc-img],[data-doc-pdf],[data-doc-share],[data-viewer-close],[data-sel-start],[data-sel-all],[data-sel-cancel],[data-move-open],[data-move-to],[data-move-new],[data-move-cancel],[data-stat-toggle],[data-folder],[data-folder-new],[data-folder-save],[data-folder-cancel],[data-folder-rename],[data-folder-del],[data-tpl-new],[data-tpl-edit],[data-tpl-save],[data-tpl-del],[data-tpl-use],[data-sign],[data-unsign],[data-print],[data-printall],[data-backup],[data-restore]');
     if (!el) return;
     if (el.hasAttribute('data-nav') || el.hasAttribute('data-go')) return go(el.getAttribute('data-nav') || el.getAttribute('data-go'));
     if (el.hasAttribute('data-sel-start')) { state.selecting = true; state.selected = {}; return render(); }
@@ -1195,6 +1253,15 @@
     if (el.hasAttribute('data-print')) { document.body.classList.remove('print-all'); return window.print(); }
     if (el.hasAttribute('data-printall')) return printAll();
     if (el.hasAttribute('data-xlsx')) return exportXlsx();
+    if (el.hasAttribute('data-rep-no')) { state.repeatAnswered = 'no'; return save(); }
+    if (el.hasAttribute('data-rep-yes')) { if (state.repeat) { state.repeat.step = 'details'; state.repeat.error = ''; } return render(); }
+    if (el.hasAttribute('data-rep-cancel')) { state.repeat = null; state.repeatAnswered = ''; return render(); }
+    if (el.hasAttribute('data-rep-save')) {
+      var rp = state.repeat; if (!rp) return;
+      var hh = parseInt(rp.h === '' ? '0' : rp.h, 10), mm = parseInt(rp.m === '' ? '0' : rp.m, 10);
+      if (isNaN(hh) || isNaN(mm) || hh < 0 || mm < 0 || mm > 59) { rp.error = 'Fyll i ytintervallet med timmar och minuter (minuter 0–59).'; return render(); }
+      rp.total = hh * 60 + mm; state.repeatAnswered = 'yes'; return save();
+    }
     if (el.hasAttribute('data-doc-new')) return openDocForm('');
     if (el.hasAttribute('data-doc-view')) return openDoc(el.getAttribute('data-doc-view'));
     if (el.hasAttribute('data-doc-pick')) { var fi2 = document.getElementById('docFile'); if (fi2) fi2.click(); return; }
