@@ -424,6 +424,18 @@
   function bufToDataUrl(buf, type) {
     return new Promise(function (res, rej) { var r = new FileReader(); r.onload = function () { res(r.result); }; r.onerror = rej; r.readAsDataURL(new Blob([buf], { type: type })); });
   }
+  function penText(d) {
+    return d.repeat && d.penaltyTime !== undefined && d.penaltyTime !== null && d.penaltyTime !== '' ? Number(d.penaltyTime) + ' min' : '';
+  }
+  function totalMin(d) {
+    if (!penText(d)) return 0;
+    var m = minutes(d);
+    return m ? m + Number(d.penaltyTime) : 0;
+  }
+  function totalText(d) {
+    var t = totalMin(d);
+    return t ? minutes(d) + ' min + ' + Number(d.penaltyTime) + ' min = ' + fmtDur(t) : '';
+  }
   function dtMs(date, time) { return new Date(date + 'T' + time + ':00').getTime(); }
   function endMs(d) {
     if (!d.date || !d.start || !d.end) return NaN;
@@ -652,7 +664,8 @@
       (tabOpts.length ? '<datalist id="dl-dyktabell">' + tabOpts.map(function (o) { return '<option value="' + esc(o) + '">'; }).join('') + '</datalist>' : '') + '</label>' +
       '<label class="f"><span>Gruppbeteckning</span><input class="in" type="text" data-k="group" maxlength="20" autocomplete="off" value="' + esc(f.group) + '"></label></div>';
     if (f.repeat) html += '<div class="pair"><label class="f"><span>Grupp före dyket</span><input class="in" type="text" data-k="groupBefore" maxlength="20" autocomplete="off" value="' + esc(f.groupBefore) + '"></label>' +
-      '<label class="f"><span>Ytintervall (min)</span><input class="in" type="text" inputmode="numeric" data-k="surfaceInterval" value="' + esc(f.surfaceInterval) + '"></label></div>';
+      '<label class="f"><span>Ytintervall (min)</span><input class="in" type="text" inputmode="numeric" data-k="surfaceInterval" value="' + esc(f.surfaceInterval) + '"></label></div>' +
+      '<label class="f"><span>Strafftid (min)</span><input class="in" type="text" inputmode="numeric" data-k="penaltyTime" value="' + esc(f.penaltyTime) + '"></label>';
     FIELDS.forEach(function (fd) {
       var key = fd[0], opts = suggestions(key);
       html += '<label class="f"><span>' + fd[1] + '</span><input class="in" type="text" data-k="' + key + '" list="dl-' + key + '" autocomplete="off" value="' + esc(f[key]) + '">';
@@ -677,6 +690,7 @@
           (pd && pd.group ? '<p class="hint" style="margin:-8px 0 12px">Föregående dyk hade gruppbeteckning ' + esc(pd.group) + '.</p>' : '') +
           '<span class="lbl">Ytintervall</span><div class="pair"><label class="f"><span>Timmar</span><input class="in" type="text" inputmode="numeric" data-r="h" value="' + esc(r.h) + '"></label>' +
           '<label class="f"><span>Minuter</span><input class="in" type="text" inputmode="numeric" data-r="m" value="' + esc(r.m) + '"></label></div>' +
+          '<label class="f"><span>Strafftid (minuter)</span><input class="in" type="text" inputmode="numeric" data-r="p" value="' + esc(r.p) + '"></label>' +
           '<button class="btn" data-rep-save>Spara dyk</button><div class="row"><button class="btn secondary small" data-rep-cancel>Avbryt</button></div>';
       }
       html += '</div></div>';
@@ -897,7 +911,7 @@
     var rows = [
       ['Datum', fmtDate(d.date)], ['Tid', (d.start && d.end) ? d.start + '–' + d.end : ''], ['Bottentid', fmtDur(minutes(d))],
       ['Maxdjup', fmtNum(num(d.depth)) + ' m'], ['Dyktabell', d.dyktabell], ['Gruppbeteckning', d.group], ['Upprepat dyk', d.repeat ? 'Ja' : ''], ['Gruppbeteckning före', d.groupBefore],
-        ['Ytintervall', d.repeat ? (d.surfaceInterval ? fmtDur(Number(d.surfaceInterval)) : '0 min') : ''], ['Uppgift', d.task], ['Arbetslag', d.team], ['Bolag', d.company],
+        ['Ytintervall', d.repeat ? (d.surfaceInterval ? fmtDur(Number(d.surfaceInterval)) : '0 min') : ''], ['Strafftid', penText(d)], ['Bottentid + strafftid', totalText(d)], ['Uppgift', d.task], ['Arbetslag', d.team], ['Bolag', d.company],
       ['Plats', d.location], ['Hjälm', d.helmet], ['Regulator', d.regulator], ['Mapp', folderName(d.folder)], ['Anteckningar', d.notes]
     ].filter(function (r) { return r[1]; });
     var html = '<button class="back" data-go="book">‹ Dykbok</button><h2>' + esc(fmtDate(d.date)) + '</h2><dl>';
@@ -936,16 +950,20 @@
     if (!f.depth.trim() || num(f.depth) <= 0) { state.error = 'Fyll i maxdjup i meter, till exempel 18,5.'; return render(); }
     var clean = {};
     Object.keys(f).forEach(function (k) { clean[k] = typeof f[k] === 'string' ? f[k].trim() : f[k]; });
-    if (clean.repeat) clean.surfaceInterval = parseInt(clean.surfaceInterval, 10) || 0;
+    if (clean.repeat) {
+      clean.surfaceInterval = parseInt(clean.surfaceInterval, 10) || 0;
+      if (clean.penaltyTime !== undefined) clean.penaltyTime = clean.penaltyTime === '' ? '' : (parseInt(clean.penaltyTime, 10) || 0);
+    }
     if (!state.editId) {
       if (!state.repeatAnswered) {
         var pv = previousDive(f);
         if (pv && pv.minutes >= 0 && pv.minutes <= 960) {
-          state.repeat = { step: 'ask', prevId: pv.dive.id, minutes: pv.minutes, group: '', h: String(Math.floor(pv.minutes / 60)), m: String(pv.minutes % 60), error: '', total: pv.minutes };
+          state.repeat = { step: 'ask', prevId: pv.dive.id, minutes: pv.minutes, group: '', h: String(Math.floor(pv.minutes / 60)), m: String(pv.minutes % 60), error: '', total: pv.minutes, p: '', penalty: null };
           return render();
         }
       } else if (state.repeatAnswered === 'yes' && state.repeat) {
         clean.repeat = true; clean.groupBefore = (state.repeat.group || '').trim(); clean.surfaceInterval = state.repeat.total;
+        if (state.repeat.penalty !== null && state.repeat.penalty !== undefined) clean.penaltyTime = state.repeat.penalty;
       }
     }
     if (state.editId) {
@@ -1047,12 +1065,12 @@
     return '<c r="' + ref + '" t="inlineStr"' + st + '><is><t xml:space="preserve">' + xmlEsc(v) + '</t></is></c>';
   }
   function buildXlsx() {
-    var head = ['Datum', 'Start', 'Slut', 'Bottentid (min)', 'Maxdjup (m)', 'Uppgift', 'Arbetslag', 'Bolag', 'Plats', 'Hjälm', 'Regulator', 'Dyktabell', 'Gruppbeteckning', 'Upprepat dyk', 'Grupp före', 'Ytintervall (min)', 'Anteckningar', 'Dykare', 'Dykare signerad', 'Dykledare', 'Dykledare signerad', 'Mapp'];
-    var widths = [12, 8, 8, 15, 12, 22, 18, 18, 18, 16, 16, 16, 18, 12, 14, 16, 34, 18, 20, 18, 20, 18];
+    var head = ['Datum', 'Start', 'Slut', 'Bottentid (min)', 'Maxdjup (m)', 'Uppgift', 'Arbetslag', 'Bolag', 'Plats', 'Hjälm', 'Regulator', 'Dyktabell', 'Gruppbeteckning', 'Upprepat dyk', 'Grupp före', 'Ytintervall (min)', 'Strafftid (min)', 'Bottentid + strafftid (min)', 'Anteckningar', 'Dykare', 'Dykare signerad', 'Dykledare', 'Dykledare signerad', 'Mapp'];
+    var widths = [12, 8, 8, 15, 12, 22, 18, 18, 18, 16, 16, 16, 18, 12, 14, 16, 14, 18, 34, 18, 20, 18, 20, 18];
     var rows = [head.map(function (h, i) { return xcell(i, 1, h, true); }).join('')];
     filtered().reverse().forEach(function (d, idx) {
       var r = idx + 2, sd = d.sig && d.sig.diver, sl = d.sig && d.sig.leader;
-      var vals = [d.date, d.start, d.end, minutes(d) || '', num(d.depth), d.task, d.team, d.company, d.location, d.helmet, d.regulator, d.dyktabell, d.group, d.repeat ? 'Ja' : '', d.groupBefore, d.repeat ? (Number(d.surfaceInterval) || 0) : '', d.notes,
+      var vals = [d.date, d.start, d.end, minutes(d) || '', num(d.depth), d.task, d.team, d.company, d.location, d.helmet, d.regulator, d.dyktabell, d.group, d.repeat ? 'Ja' : '', d.groupBefore, d.repeat ? (Number(d.surfaceInterval) || 0) : '', penText(d) ? Number(d.penaltyTime) : '', totalMin(d) || '', d.notes,
         sd ? sd.name : '', sd ? fmtStamp(sd.at) : '', sl ? sl.name : '', sl ? fmtStamp(sl.at) : '', folderName(d.folder)];
       rows.push(vals.map(function (v, i) { return xcell(i, r, v, false); }).join(''));
     });
@@ -1101,7 +1119,7 @@
       var rows = [
         ['Tid', (d.start && d.end) ? d.start + '–' + d.end : ''], ['Bottentid', fmtDur(minutes(d))],
         ['Maxdjup', fmtNum(num(d.depth)) + ' m'], ['Dyktabell', d.dyktabell], ['Gruppbeteckning', d.group], ['Upprepat dyk', d.repeat ? 'Ja' : ''], ['Gruppbeteckning före', d.groupBefore],
-        ['Ytintervall', d.repeat ? (d.surfaceInterval ? fmtDur(Number(d.surfaceInterval)) : '0 min') : ''], ['Uppgift', d.task], ['Arbetslag', d.team], ['Bolag', d.company],
+        ['Ytintervall', d.repeat ? (d.surfaceInterval ? fmtDur(Number(d.surfaceInterval)) : '0 min') : ''], ['Strafftid', penText(d)], ['Bottentid + strafftid', totalText(d)], ['Uppgift', d.task], ['Arbetslag', d.team], ['Bolag', d.company],
         ['Plats', d.location], ['Hjälm', d.helmet], ['Regulator', d.regulator], ['Anteckningar', d.notes]
       ].filter(function (x) { return x[1]; });
       html += '<div class="pdive"><h3>' + esc(fmtDate(d.date)) + '</h3><dl>' +
@@ -1260,6 +1278,12 @@
       var rp = state.repeat; if (!rp) return;
       var hh = parseInt(rp.h === '' ? '0' : rp.h, 10), mm = parseInt(rp.m === '' ? '0' : rp.m, 10);
       if (isNaN(hh) || isNaN(mm) || hh < 0 || mm < 0 || mm > 59) { rp.error = 'Fyll i ytintervallet med timmar och minuter (minuter 0–59).'; return render(); }
+      var pen = null;
+      if (rp.p !== undefined && String(rp.p).trim() !== '') {
+        pen = parseInt(rp.p, 10);
+        if (isNaN(pen) || pen < 0) { rp.error = 'Fyll i strafftiden i minuter, till exempel 12.'; return render(); }
+      }
+      rp.penalty = pen;
       rp.total = hh * 60 + mm; state.repeatAnswered = 'yes'; return save();
     }
     if (el.hasAttribute('data-doc-new')) return openDocForm('');
